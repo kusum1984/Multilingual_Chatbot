@@ -436,4 +436,89 @@ def planner_node(state: AgentState) -> AgentState:
     state.update_from_planner(raw_output)
     return state
 
-def executor_node(state:
+def executor_node(state: AgentState) -> AgentState:
+    results = {}
+    for source in state.data_sources or []:
+        try:
+            response = agents[source].invoke({
+                "input": f"Question: {state.question}\nPlan: {state.plan}"
+            })
+            results[source] = response["output"] if isinstance(response, dict) else response
+        except Exception as e:
+            results[source] = f"Error processing {source}: {str(e)}"
+    state.retrieved_data = results
+    return state
+
+def summarizer_node(state: AgentState) -> AgentState:
+    state.summary = agents["summarizer"].invoke({
+        "question": state.question,
+        "retrieved_data": json.dumps(state.retrieved_data, indent=2)
+    })
+    return state
+
+def decision_node(state: AgentState) -> AgentState:
+    state.final_answer = agents["decision"].invoke({
+        "question": state.question,
+        "summary": state.summary
+    })
+    return state
+
+def followup_node(state: AgentState) -> AgentState:
+    state.follow_up_questions = [
+        q.strip() for q in agents["followup"].invoke({
+            "question": state.question,
+            "final_answer": state.final_answer
+        }).split("\n") if q.strip()
+    ][:3]  # Limit to 3 follow-ups
+    return state
+
+# Workflow Construction
+def create_workflow():
+    workflow = StateGraph(AgentState)
+   
+    workflow.add_node("planner", planner_node)
+    workflow.add_node("executor", executor_node)
+    workflow.add_node("summarizer", summarizer_node)
+    workflow.add_node("decision", decision_node)
+    workflow.add_node("followup", followup_node)
+   
+    workflow.add_edge("planner", "executor")
+    workflow.add_node("executor", executor_node)
+    workflow.add_edge("executor", "summarizer")
+    workflow.add_edge("summarizer", "decision")
+    workflow.add_edge("decision", "followup")
+    workflow.add_edge("followup", END)
+   
+    workflow.set_entry_point("planner")
+    return workflow.compile()
+
+# Main Application
+def main():
+    workflow = create_workflow()
+   
+    print("Data Assistant (type 'exit' to quit)")
+    while True:
+        try:
+            question = input("\nYou: ").strip()
+            if question.lower() in ('exit', 'quit'):
+                break
+               
+            state = AgentState(
+                question=question,
+                conversation_history=memory_manager.get_context()
+            )
+           
+            result = workflow.invoke(state)
+            memory_manager.update_context(question, result.final_answer)
+           
+            print(f"\nAssistant: {result.final_answer}")
+            if result.follow_up_questions:
+                print("\nSuggested Follow-ups:")
+                for i, q in enumerate(result.follow_up_questions, 1):
+                    print(f"{i}. {q}")
+               
+        except Exception as e:
+            print(f"\nError: {str(e)}")
+
+if __name__ == "__main__":
+    main()
