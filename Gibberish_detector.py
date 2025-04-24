@@ -63,6 +63,9 @@ Respond EXACTLY "<Reason>|<lang_code>" if:
 - Invalid script mixing (e.g., "漢字abc" → "Script mix|ja")
 - Meaningless symbols (e.g., "@#$%" → "Symbols|pt")
 - Keyboard patterns (e.g., "qwertyuiop" → "Keyboard walk|de")
+- Repetitive nonsense (e.g., "Müll Müll Müll" → "Repetitive nonsense|de")
+- Pseudo-words without meaning (e.g., "アプイマプ、スジドゥス" → "Pseudo-words|ja")
+- Random syllable combinations (e.g., "ko bo ko bo" → "Random syllables|ja")
 
 ### Examples ###
 Valid:
@@ -95,16 +98,20 @@ Analysis Steps:
 2. Script Validation
 3. Structural Check
 4. Statistical Analysis
+5. Contextual Meaning Analysis
+
 
 Required Output:
 - "Valid" OR
-- "<2-word reason>|<lang_code>"
+- "<2-word reason in english>|<lang_code>"
 
 Critical Notes:
-- Consider partial words as valid if they follow language patterns
-- Allow for proper nouns/names
-- Accept common abbreviations
-- Flag random sequences >4 characters
+- Consider partial words as valid only if they form meaningful fragments
+- Proper nouns/names must be recognizable as such
+- Common abbreviations must be legitimate
+- Flag random sequences >3 characters
+- Detect repetitive nonsense patterns
+- Reject pseudo-words that don't form real vocabulary
 """
 
 # 🌐 Enhanced Language-Specific Error Messages
