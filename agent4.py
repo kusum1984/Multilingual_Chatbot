@@ -608,6 +608,7 @@ agents = {
 }
 
 # Workflow Nodes
+"""
 def planner_node(state: AgentState) -> AgentState:
     logger.info(f"Planning for question: {state.question}")
     history = "\n".join(
@@ -663,6 +664,81 @@ def executor_node(state: AgentState) -> AgentState:
     
     state.retrieved_data = results
     return state
+    """
+def planner_node(state: AgentState) -> AgentState:
+    logger.info(f"Planning for question: {state.question}")
+    history = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}"
+        for m in state.conversation_history
+    )
+    
+    try:
+        raw_output = agents["planner"].invoke({
+            "question": state.question,
+            "history": history
+        })
+        state.update_from_planner(raw_output)
+    except Exception as e:
+        logger.error(f"Planner node failed: {str(e)}")
+        state.errors.append(f"Planner error: {str(e)}")
+        state.plan = "Fallback plan: 1. Search Elasticsearch\n2. Query SQL\n3. Check Excel"
+        state.data_sources = ["elasticsearch", "sql", "excel"]
+    
+    return state
+
+def executor_node(state: AgentState) -> AgentState:
+    results = {}
+    for source in state.data_sources or []:
+        try:
+            logger.info(f"Executing {source} tool for question: {state.question}")
+            
+            # Create proper input dictionary for each agent type
+            if source == "sql":
+                response = agents[source].invoke({
+                    "input": f"Question: {state.question}\nPlan: {state.plan}"
+                })
+            else:
+                response = agents[source].invoke({
+                    "input": f"Question: {state.question}\nPlan: {state.plan}",
+                    "plan": state.plan
+                }, config={"run_name": source})
+            
+            # Handle different response formats
+            if isinstance(response, dict):
+                if "output" in response:
+                    output = response["output"]
+                elif "result" in response:
+                    output = response["result"]
+                else:
+                    output = str(response)
+            else:
+                output = str(response)
+            
+            results[source] = {
+                "status": "success",
+                "data": output
+            }
+        except TimeoutError:
+            error_msg = f"{source} execution timed out after {cfg.tool_timeout} seconds"
+            logger.error(error_msg)
+            results[source] = {
+                "status": "error",
+                "error": error_msg
+            }
+            state.errors.append(error_msg)
+        except Exception as e:
+            error_msg = f"Error processing {source}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            results[source] = {
+                "status": "error",
+                "error": error_msg,
+                "traceback": traceback.format_exc()
+            }
+            state.errors.append(error_msg)
+    
+    state.retrieved_data = results
+    return state
+
 
 def summarizer_node(state: AgentState) -> AgentState:
     if not state.retrieved_data:
@@ -750,6 +826,7 @@ def create_workflow():
     return workflow.compile()
 
 # Main Application
+"""
 def main():
     workflow = create_workflow()
     
@@ -771,6 +848,48 @@ def main():
             
             print(f"\nAssistant: {result.final_answer}")
             if result.follow_up_questions:
+                print("\nSuggested Follow-ups:")
+                for i, q in enumerate(result.follow_up_questions, 1):
+                    print(f"{i}. {q}")
+                
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            break
+        except Exception as e:
+            logger.error(f"Main loop error: {str(e)}", exc_info=True)
+            print(f"\nError: {str(e)}")
+
+if __name__ == "__main__":
+    main()
+"""
+
+def main():
+    workflow = create_workflow()
+    
+    print("Data Assistant (type 'exit' to quit)")
+    while True:
+        try:
+            question = input("\nYou: ").strip()
+            if question.lower() in ('exit', 'quit'):
+                break
+                
+            state = AgentState(
+                question=question,
+                conversation_history=memory_manager.get_context()
+            )
+            
+            logger.info(f"Processing question: {question}")
+            result = workflow.invoke(state)
+            
+            # Handle the workflow result properly
+            final_answer = getattr(result, 'final_answer', None)
+            if final_answer is None:
+                final_answer = "Sorry, I couldn't generate a proper response."
+            
+            memory_manager.update_context(question, final_answer)
+            
+            print(f"\nAssistant: {final_answer}")
+            if hasattr(result, 'follow_up_questions') and result.follow_up_questions:
                 print("\nSuggested Follow-ups:")
                 for i, q in enumerate(result.follow_up_questions, 1):
                     print(f"{i}. {q}")
