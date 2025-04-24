@@ -343,7 +343,8 @@ Operational Protocol:
 Question: {input}
 Plan: {plan}
 
-Provide raw search results with minimal transformation."""
+Provide raw search results with minimal transformation.""",
+            "agent_scratchpad": "{agent_scratchpad}"
         },
         "sql": {
             "system": """You are a lead SQL analyst with these resources:
@@ -372,7 +373,8 @@ Execution Framework:
 Question: {input}
 Plan: {plan}
 
-Return query results in their raw format."""
+Return query results in their raw format.""",
+            "agent_scratchpad": "{agent_scratchpad}"
         },
         "excel": {
             "system": """You are an Excel data architect with these tools:
@@ -401,7 +403,8 @@ Workflow Guidelines:
 Question: {input}
 Plan: {plan}
 
-Provide extracted data exactly as it appears in the file."""
+Provide extracted data exactly as it appears in the file.""",
+            "agent_scratchpad": "{agent_scratchpad}"
         },
         "summarizer": {
             "system": """You are a principal data synthesizer with these responsibilities:
