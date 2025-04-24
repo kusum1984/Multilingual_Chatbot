@@ -24,14 +24,18 @@ Spanish (es), Portuguese (pt), Chinese (zh), Japanese (ja), German (de), French 
 - Random keyboard mashing (e.g., "asdfghjkl")
 - Invalid character combinations
 - Meaningless symbol strings
+- Repetitive nonsense words (e.g., "Müll Müll Müll", "Blah blah blah")
+- Pseudo-words that resemble but don't form real language constructs
+- Random combinations of valid characters/syllables without meaning
 
 2. Valid Content Includes:
-- ANY recognizable words in target languages
+- Recognizable words used in meaningful context in target languages
 - Numbers/mathematical expressions with context
 - Formal structures (code, formulas, IDs)
 - Grammatical patterns (even partial)
 - Proper nouns/names
 - Common abbreviations
+- Idiomatic expressions
 
 ### Language-Specific Validation Rules ###
 
@@ -42,24 +46,28 @@ Spanish (es), Portuguese (pt), Chinese (zh), Japanese (ja), German (de), French 
 - European: Proper diacritic usage (e.g., "café" vs "c@fe")
 
 2. Structural Analysis:
-- Minimum 1 valid morpheme per language
+- Minimum 1 valid morpheme per language forming meaningful content
 - Valid word boundaries
 - Acceptable punctuation
+- Contextual coherence (words relate to each other meaningfully)
 
 3. Statistical Checks:
 - Keyboard walking patterns (qwerty, azerty)
 - Character repetition (aaaa, 1111)
 - Impossible n-grams (e.g., "xzq" in Spanish)
+- Repetitive nonsense patterns (e.g., "foo foo foo")
+- Pseudo-words that don't form real vocabulary
 
 ### Decision Protocol ###
 Respond EXACTLY "Valid" if ANY of:
-- ≥1 valid word in target languages
+- ≥1 valid word used in meaningful context in target languages
 - Numbers with context (e.g., "123 Main St")
 - Code/formulas/IDs (e.g., "ID-1234")
 - Proper names/places
+- Text shows grammatical structure and contextual meaning
 
 Respond EXACTLY "<Reason>|<lang_code>" if:
-- No valid words (e.g., "asdfg" → "Random chars|es")
+- No valid words in meaningful context (e.g., "asdfg" → "Random chars|es")
 - Invalid script mixing (e.g., "漢字abc" → "Script mix|ja")
 - Meaningless symbols (e.g., "@#$%" → "Symbols|pt")
 - Keyboard patterns (e.g., "qwertyuiop" → "Keyboard walk|de")
@@ -82,9 +90,10 @@ Gibberish:
 - Portuguese: "zxcv qwer" → "Keyboard walk|pt" 
 - Chinese: "随机汉字组合" → "No meaning|zh"
 - Japanese: "あかさたなはま" → "No structure|ja"
-- German: "qwertz uiopü" → "Keyboard seq|de"
-- French: "!@£$%^&*" → "Symbols only|fr"
+- German: "Müll Müll Müll" → "Repetitive nonsense|de"
+- French: "blah blah blah" → "Meaningless repetition|fr"
 - Hindi: "कखग घङच" → "No morphemes|hi"
+- Japanese: "アプイマプ、スジドゥス、コボコボ？" → "Pseudo-words|ja"
 """
 
 # ✍️ Optimized User Prompt Template
@@ -97,13 +106,12 @@ Analysis Steps:
 1. Language Identification
 2. Script Validation
 3. Structural Check
-4. Statistical Analysis
-5. Contextual Meaning Analysis
-
+4. Contextual Meaning Analysis
+5. Statistical Analysis
 
 Required Output:
 - "Valid" OR
-- "<2-word reason in english>|<lang_code>"
+- "<2-word reason>|<lang_code>"
 
 Critical Notes:
 - Consider partial words as valid only if they form meaningful fragments
@@ -188,6 +196,10 @@ def run_tests():
         ("!@#$%^&*", "F"),
         ("कखग घङच", "F"),
         ("xzqy wvut", "F"),
+        ("Müll Müll Müll", "F"),
+        ("Unsinn Unsinn Unsinn", "F"),
+        ("アプイマプ、スジドゥス、コボコボ？", "F"),
+        ("Blah blah blah", "F"),
         
         # Edge cases
         ("", "T"),  # Empty string
