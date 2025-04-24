@@ -608,7 +608,9 @@ agents = {
 }
 
 # Workflow Nodes
+
 """
+**********************************"""******************************************
 def planner_node(state: AgentState) -> AgentState:
     logger.info(f"Planning for question: {state.question}")
     history = "\n".join(
@@ -664,6 +666,7 @@ def executor_node(state: AgentState) -> AgentState:
     
     state.retrieved_data = results
     return state
+**************************    """*************************************************
     """
 def planner_node(state: AgentState) -> AgentState:
     logger.info(f"Planning for question: {state.question}")
@@ -685,7 +688,127 @@ def planner_node(state: AgentState) -> AgentState:
         state.data_sources = ["elasticsearch", "sql", "excel"]
     
     return state
+==============================================
 
+def executor_node(state: AgentState) -> AgentState:
+    results = {}
+    for source in state.data_sources or []:
+        try:
+            logger.info(f"Executing {source} tool for question: {state.question}")
+            
+            # Create the proper input structure for the agent
+            agent_input = {
+                "input": f"Question: {state.question}\nPlan: {state.plan}",
+            }
+            
+            # Special handling for SQL agent which has different input requirements
+            if source == "sql":
+                response = agents[source].invoke(agent_input)
+            else:
+                # For other agents, include the plan separately
+                agent_input["plan"] = state.plan
+                response = agents[source].invoke(
+                    agent_input,
+                    config={
+                        "run_name": source,
+                        "callbacks": None,  # Add callbacks if needed
+                    }
+                )
+            
+            # Standardize the response handling
+            if isinstance(response, dict):
+                output = response.get("output", str(response))
+            else:
+                output = str(response)
+            
+            results[source] = {
+                "status": "success",
+                "data": output
+            }
+            
+        except TimeoutError:
+            error_msg = f"{source} execution timed out after {cfg.tool_timeout} seconds"
+            logger.error(error_msg)
+            results[source] = {
+                "status": "error",
+                "error": error_msg
+            }
+            state.errors.append(error_msg)
+        except Exception as e:
+            error_msg = f"Error processing {source}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            results[source] = {
+                "status": "error",
+                "error": error_msg,
+                "traceback": traceback.format_exc()
+            }
+            state.errors.append(error_msg)
+    
+    state.retrieved_data = results
+    return state
+=============================
+
+
+def executor_node(state: AgentState) -> AgentState:
+    results = {}
+    for source in state.data_sources or []:
+        try:
+            logger.info(f"Executing {source} tool for question: {state.question}")
+            
+            # Create the proper input structure for the agent
+            agent_input = {
+                "input": f"Question: {state.question}\nPlan: {state.plan}",
+            }
+            
+            # Special handling for SQL agent which has different input requirements
+            if source == "sql":
+                response = agents[source].invoke(agent_input)
+            else:
+                # For other agents, include the plan separately
+                agent_input["plan"] = state.plan
+                response = agents[source].invoke(
+                    agent_input,
+                    config={
+                        "run_name": source,
+                        "callbacks": None,  # Add callbacks if needed
+                    }
+                )
+            
+            # Standardize the response handling
+            if isinstance(response, dict):
+                output = response.get("output", str(response))
+            else:
+                output = str(response)
+            
+            results[source] = {
+                "status": "success",
+                "data": output
+            }
+            
+        except TimeoutError:
+            error_msg = f"{source} execution timed out after {cfg.tool_timeout} seconds"
+            logger.error(error_msg)
+            results[source] = {
+                "status": "error",
+                "error": error_msg
+            }
+            state.errors.append(error_msg)
+        except Exception as e:
+            error_msg = f"Error processing {source}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            results[source] = {
+                "status": "error",
+                "error": error_msg,
+                "traceback": traceback.format_exc()
+            }
+            state.errors.append(error_msg)
+    
+    state.retrieved_data = results
+    return state
+
+"""
+
+*********************************************************************************
 def executor_node(state: AgentState) -> AgentState:
     results = {}
     for source in state.data_sources or []:
@@ -738,7 +861,8 @@ def executor_node(state: AgentState) -> AgentState:
     
     state.retrieved_data = results
     return state
-
+*******************************************************************************""
+"""
 
 def summarizer_node(state: AgentState) -> AgentState:
     if not state.retrieved_data:
