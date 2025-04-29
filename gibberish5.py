@@ -238,3 +238,83 @@ def run_tests():
 
 if __name__ == "__main__":
     run_tests()
+
+    ************************************
+    # ===== Enhanced Test Suite with Language Detection Validation =====
+def run_tests():
+    test_cases = [
+        # Format: (text, expected_status, expected_lang_if_valid)
+        # Valid Texts
+        ("Hello world", "T", "en"),
+        ("Bonjour le monde", "T", "fr"),
+        ("Hola mundo", "T", "es"),
+        ("Привет мир", "T", "ru"),
+        ("مرحبا بالعالم", "T", "ar"),
+        
+        # Gibberish Cases (lang detection may fail)
+        ("asdfghjkl", "F", None),
+        ("qwertyuiop", "F", None),
+        ("!@#$%^&*", "F", None),
+        
+        # Edge Cases
+        ("123 Main St", "T", "en"),
+        ("ID-5849-BN", "T", None),  # Codes often don't detect language
+        ("@username", "T", None)    # Handles don't detect language
+    ]
+
+    print("=== Enhanced Gibberish Detection Test ===")
+    print("Now validating both classification AND language detection\n")
+    
+    passed_classification = 0
+    passed_language = 0
+    total = len(test_cases)
+    
+    for idx, (text, expected_status, expected_lang) in enumerate(test_cases, 1):
+        # Run detection
+        status, err_type, msg = check_gibberish(text)
+        
+        # Get detected language
+        try:
+            detected_lang = langdetect.detect(text) if text.strip() else None
+        except:
+            detected_lang = None
+        
+        # Check classification
+        classification_ok = status == expected_status
+        if classification_ok:
+            passed_classification += 1
+            
+        # Check language detection (only for valid texts)
+        language_ok = True
+        if expected_status == "T" and expected_lang:
+            language_ok = detected_lang == expected_lang
+            if language_ok:
+                passed_language += 1
+        
+        # Print results
+        result = []
+        if classification_ok:
+            result.append("✅ CLASS")
+        else:
+            result.append("❌ CLASS")
+            
+        if not expected_lang or language_ok:
+            result.append("✅ LANG")
+        else:
+            result.append("❌ LANG")
+        
+        print(f"{idx:02d} {' '.join(result)}: '{text[:20]}'")
+        print(f"   Status: {status} (expected {expected_status})")
+        if expected_lang:
+            print(f"   Language: {detected_lang} (expected {expected_lang})")
+    
+    # Calculate accuracy
+    classification_acc = passed_classification / total * 100
+    language_acc = passed_language / sum(1 for case in test_cases if case[2]) * 100
+    
+    print(f"\nResults:")
+    print(f"- Classification: {passed_classification}/{total} ({classification_acc:.1f}%)")
+    print(f"- Language Detection: {passed_language}/{sum(1 for case in test_cases if case[2])} ({language_acc:.1f}%)")
+
+if __name__ == "__main__":
+    run_tests()
