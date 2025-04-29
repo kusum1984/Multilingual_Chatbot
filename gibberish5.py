@@ -318,3 +318,186 @@ def run_tests():
 
 if __name__ == "__main__":
     run_tests()
+***********************************************
+# ===== Comprehensive Test Suite (100+ Cases) =====
+def run_tests():
+    test_cases = [
+        # Section 1: Indo-European Languages (30 cases)
+        ("Hello world", "T", "en"),  # English
+        ("Bonjour le monde", "T", "fr"),  # French
+        ("Hola mundo", "T", "es"),  # Spanish
+        ("Привет мир", "T", "ru"),  # Russian
+        ("नमस्ते दुनिया", "T", "hi"),  # Hindi
+        ("Γειά σου Κόσμε", "T", "el"),  # Greek
+        ("Witaj świecie", "T", "pl"),  # Polish
+        ("Hej världen", "T", "sv"),  # Swedish
+        ("Halló heimur", "T", "is"),  # Icelandic
+        ("Sveika pasaule", "T", "lv"),  # Latvian
+        ("Përshëndetje botë", "T", "sq"),  # Albanian
+        ("Salve mundi", "T", "la"),  # Latin
+        ("Dia duit domhan", "T", "ga"),  # Irish
+        ("Helo byd", "T", "cy"),  # Welsh
+        ("Salam dunia", "T", "ms"),  # Malay
+        ("ନମସ୍କାର ବିଶ୍ୱ", "T", "or"),  # Odia
+        ("ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ ਦੁਨਿਆ", "T", "pa"),  # Punjabi
+        ("હેલો વર્લ્ડ", "T", "gu"),  # Gujarati
+        ("হ্যালো বিশ্ব", "T", "bn"),  # Bengali
+        ("வணக்கம் உலகம்", "T", "ta"),  # Tamil
+        ("హలో ప్రపంచం", "T", "te"),  # Telugu
+        ("ഹലോ വേൾഡ്", "T", "ml"),  # Malayalam
+        ("ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ ਦੁਨਿਆ", "T", "pa"),  # Punjabi
+        ("مرحبا بالعالم", "T", "ar"),  # Arabic
+        ("שלום עולם", "T", "he"),  # Hebrew
+        ("سلام دنیا", "T", "fa"),  # Persian
+        ("हॅलो वर्ल्ड", "T", "mr"),  # Marathi
+        ("नमस्कार संसार", "T", "ne"),  # Nepali
+        ("හෙලෝ වර්ල්ඩ්", "T", "si"),  # Sinhala
+        ("ជំរាបសួរ ពិភពលោក", "T", "km"),  # Khmer
+        
+        # Section 2: Asian Languages (25 cases)
+        ("你好世界", "T", "zh"),  # Chinese
+        ("こんにちは世界", "T", "ja"),  # Japanese
+        ("안녕하세요 세계", "T", "ko"),  # Korean
+        ("สวัสดีชาวโลก", "T", "th"),  # Thai
+        ("Xin chào thế giới", "T", "vi"),  # Vietnamese
+        ("မင်္ဂလာပါကမ္ဘာလောက", "T", "my"),  # Burmese
+        ("හෙලෝ වර්ල්ඩ්", "T", "si"),  # Sinhala
+        ("សួស្តីពិភពលោក", "T", "km"),  # Khmer
+        ("မင်္ဂလာပါ", "T", "my"),  # Burmese
+        ("ສະບາຍດີຊາວໂລກ", "T", "lo"),  # Lao
+        ("ᠰᠠᠢᠨ ᠪᠠᠢᠨᠠᠷ ᠳ᠋ᠤᠭᠠᠷ", "T", "mn"),  # Mongolian
+        ("གྲོས་ཚོགས་འཛིན་སྐྱོང་", "T", "bo"),  # Tibetan
+        ("ନମସ୍କାର ବିଶ୍ୱ", "T", "or"),  # Odia
+        ("ਹੈਲੋ ਵਰਲਡ", "T", "pa"),  # Punjabi
+        ("হ্যালো বিশ্ব", "T", "bn"),  # Bengali
+        ("வணக்கம் உலகம்", "T", "ta"),  # Tamil
+        ("హలో ప్రపంచం", "T", "te"),  # Telugu
+        ("ഹലോ വേൾഡ്", "T", "ml"),  # Malayalam
+        ("ନମସ୍କାର", "T", "or"),  # Odia
+        ("ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ", "T", "pa"),  # Punjabi
+        ("হ্যালো", "T", "bn"),  # Bengali
+        ("வணக்கம்", "T", "ta"),  # Tamil
+        ("హలో", "T", "te"),  # Telugu
+        ("ഹലോ", "T", "ml"),  # Malayalam
+        ("こんにちは", "T", "ja"),  # Japanese
+        
+        # Section 3: African Languages (15 cases)
+        ("Sawubona Mhlaba", "T", "zu"),  # Zulu
+        ("Habari dunia", "T", "sw"),  # Swahili
+        ("Dumela lefatshe", "T", "tn"),  # Tswana
+        ("Moni m'dziko", "T", "ny"),  # Chichewa
+        ("Sannu duniya", "T", "ha"),  # Hausa
+        ("Ndewo ụwa", "T", "ig"),  # Igbo
+        ("Salamu dunia", "T", "am"),  # Amharic
+        ("Mo ki O Ile Aiye", "T", "yo"),  # Yoruba
+        ("Agoo dunia", "T", "ee"),  # Ewe
+        ("Kedu uwa", "T", "ig"),  # Igbo
+        ("Sanu duniyan", "T", "ff"),  # Fulani
+        ("Akwaba wiase", "T", "ak"),  # Akan
+        ("Mwaramutse isi", "T", "rw"),  # Kinyarwanda
+        ("Saluton mondo", "T", "eo"),  # Esperanto (not African but included)
+        ("Hallo wêreld", "T", "af"),  # Afrikaans
+        
+        # Section 4: Indigenous/Endangered Languages (10 cases)
+        ("Kwe kwe otsi", "T", "cr"),  # Cree
+        ("Háu mitákuye oyás'iŋ", "T", "lkt"),  # Lakota
+        ("Yá'át'ééh", "T", "nv"),  # Navajo
+        ("Aloha honua", "T", "haw"),  # Hawaiian
+        ("Kia ora te ao", "T", "mi"),  # Māori
+        ("Ahalan dunia", "T", "ber"),  # Berber
+        ("Bozo aylan", "T", "ber"),  # Berber
+        ("Kamusta mundo", "T", "fil"),  # Filipino
+        ("Halo dunia", "T", "id"),  # Indonesian
+        ("Talofa lalolagi", "T", "sm"),  # Samoan
+        
+        # Section 5: Gibberish Cases (20 cases)
+        ("asdfghjkl", "F", None),
+        ("qwertyuiop", "F", None),
+        ("йцукенгшщз", "F", None),
+        ("ضصثقضصثق", "F", None),
+        ("ㅁㄴㅇㄹㅁㄴㅇ", "F", None),
+        ("ฟหกด่าสว", "F", None),
+        ("αβγδαβγδ", "F", None),
+        ("אבגדאבגד", "F", None),
+        ("!@#$%^&*", "F", None),
+        ("xjdkl 392 sdk", "F", None),
+        ("xzqy wvut", "F", None),
+        ("blah blah", "F", None),
+        ("केाीी", "F", None),
+        ("asdf asdf asdf", "F", None),
+        ("123 123 123", "F", None),
+        ("foo@bar$", "F", None),
+        ("漢字漢字", "F", None),
+        ("कखगघ", "F", None),
+        ("zzxxyy", "F", None),
+        ("qwopasdf", "F", None),
+        
+        # Section 6: Edge Cases (10 cases)
+        ("A", "T", None),  # Single character
+        ("我", "T", "zh"),  # Chinese character
+        ("123", "T", None),  # Numbers
+        (" ", "T", None),  # Empty string
+        ("@username", "T", None),  # Handle
+        ("#hashtag", "T", None),  # Tag
+        ("ID-5849-BN", "T", None),  # Code
+        ("東京タワー", "T", "ja"),  # Mixed script
+        ("asdf", "F", None),  # Short gibberish
+        ("कखग", "F", None)  # Invalid sequence
+    ]
+
+    print("=== Ultimate Language Validation Test ===")
+    print(f"Running {len(test_cases)} test cases across 50+ languages\n")
+    
+    passed_classification = 0
+    passed_language = 0
+    total = len(test_cases)
+    lang_expected_count = sum(1 for case in test_cases if case[2])
+    
+    for idx, (text, expected_status, expected_lang) in enumerate(test_cases, 1):
+        # Run detection
+        status, err_type, msg = check_gibberish(text)
+        
+        # Get detected language
+        try:
+            detected_lang = langdetect.detect(text) if text.strip() and expected_status == "T" else None
+        except:
+            detected_lang = None
+        
+        # Check classification
+        classification_ok = status == expected_status
+        if classification_ok:
+            passed_classification += 1
+            
+        # Check language detection (only for valid texts with expected lang)
+        language_ok = True
+        if expected_status == "T" and expected_lang:
+            language_ok = detected_lang == expected_lang
+            if language_ok:
+                passed_language += 1
+        
+        # Print results
+        result = []
+        if classification_ok:
+            result.append("✅ CLASS")
+        else:
+            result.append("❌ CLASS")
+            
+        if not expected_lang or language_ok:
+            result.append("✅ LANG")
+        else:
+            result.append(f"❌ LANG (got {detected_lang})")
+        
+        print(f"{idx:03d} {' '.join(result)}: '{text[:20]}'")
+        if not classification_ok:
+            print(f"   Expected {expected_status}, got {status} | {msg}")
+    
+    # Calculate accuracy
+    classification_acc = passed_classification / total * 100
+    language_acc = passed_language / lang_expected_count * 100 if lang_expected_count > 0 else 100
+    
+    print(f"\n=== Final Results ===")
+    print(f"Classification Accuracy: {passed_classification}/{total} ({classification_acc:.1f}%)")
+    print(f"Language Detection Accuracy: {passed_language}/{lang_expected_count} ({language_acc:.1f}%)")
+
+if __name__ == "__main__":
+    run_tests()
