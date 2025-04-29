@@ -1,194 +1,205 @@
-from typing import Literal, TypedDict, List
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_core.messages import BaseMessage
-from langgraph.graph import END, StateGraph
-from langchain.agents import AgentExecutor, create_openai_functions_agent
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_types import AgentType
+# === Full Working Multi-Agent System ===
+
+from langchain.agents import AgentExecutor, create_openai_functions_agent, create_sql_agent
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
-from langchain_community.utilities.elasticsearch import ElasticsearchStore
-from langchain_community.tools.elasticsearch import ElasticsearchDocs
-from langchain.schema import Document
-from langchain_groq import ChatGroq
+from langchain_community.utilities import SQLDatabase
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import Tool
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_openai import AzureChatOpenAI
+from elasticsearch import Elasticsearch
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+import urllib.parse
 import os
+import json
+from typing import List
 
-# Initialize your components (replace with your actual configurations)
-groq_api_key = os.getenv("GROQ_API_KEY")
-llm = ChatGroq(groq_api_key=groq_api_key, model_name="Gemma2-9b-It")
+# === Load environment variables ===
+load_dotenv()
 
-# Data model for routing
-class RouteQuery(BaseModel):
-    """Route a user query to the most relevant datasource."""
-    datasource: Literal["sql_db", "elasticsearch"] = Field(
-        ...,
-        description="Given a user question choose to route it to SQL database or ElasticSearch.",
-    )
+# === Configuration ===
+class Config:
+    def __init__(self):
+        # Elasticsearch
+        self.elastic_index_data_from = 0
+        self.elastic_index_data_size = 10
+        self.elastic_index_data_max_size = 50
+        self.aggs_limit = 5
+        self.max_search_retries = 3
+        self.token_limit = 3000
+        self.es = Elasticsearch(
+            os.getenv("ELASTIC_ENDPOINT"),
+            api_key=os.getenv("ELASTIC_API_KEY"),
+            verify_certs=False
+        )
 
-# Create structured LLM router
-structured_llm_router = llm.with_structured_output(RouteQuery)
+        # LLM
+        self.llm = AzureChatOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            deployment_name="gpt-4",
+            model="gpt-4",
+            temperature=0
+        )
 
-# Prompt for router
-system = """You are an expert at routing a user question to either SQL database or ElasticSearch.
-The SQL database contains structured relational data with tables, rows, and columns.
-ElasticSearch contains document-based data with full-text search capabilities.
+        # LangChain verbosity
+        self.langchain_verbose = True
 
-Use SQL database for:
-- Questions about specific records or relationships between entities
-- Questions requiring aggregation, filtering, or joining of structured data
-- Questions about database schema or table structures
+        # SQL Server connection setup
+        driver = '{ODBC Driver 18 for SQL Server}'
+        server = os.getenv("SQL_SERVER")
+        database = os.getenv("SQL_DATABASE")
+        user = os.getenv("SQL_USER")
+        password = os.getenv("SQL_PASSWORD")
 
-Use ElasticSearch for:
-- Full-text search queries
-- Questions about unstructured or semi-structured data
-- Questions requiring fuzzy matching or relevance scoring"""
-route_prompt = ChatPromptTemplate.from_messages([
-    ("system", system),
-    ("human", "{question}"),
-])
+        conn = f"Driver={driver};Server=tcp:{server},1433;Database={database};Uid={user};Pwd={password};Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+        params = urllib.parse.quote_plus(conn)
+        conn_str = f'mssql+pyodbc:///?autocommit=true&odbc_connect={params}'
+        self.engine = create_engine(conn_str, echo=True)
+        self.sql_db = SQLDatabase(engine=self.engine, schema="comp")
 
-# Initialize your agents (replace with your actual implementations)
-# 1. SQL Agent
-db = SQLDatabase.from_uri("your_database_uri")
-sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-sql_agent = create_sql_agent(
-    llm=llm,
-    toolkit=sql_toolkit,
-    agent_type=AgentType.OPENAI_FUNCTIONS,
-    verbose=True
-)
+cfg = Config()
 
-# 2. ElasticSearch Agent
-es_store = ElasticsearchStore(
-    es_url="your_elasticsearch_url",
-    index_name="your_index_name",
-    strategy=ElasticsearchStore.SparseVectorRetrievalStrategy()
-)
-es_tool = ElasticsearchDocs(store=es_store)
-es_tools = [es_tool]
+# === Elasticsearch Agent Tools ===
+class ListIndicesInput(BaseModel):
+    separator: str = Field(", ", description="Separator for the list of indices")
 
-es_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant specialized in searching ElasticSearch data."),
-    MessagesPlaceholder("chat_history", optional=True),
-    ("human", "{input}"),
-    MessagesPlaceholder("agent_scratchpad"),
-])
+class IndexDetailsInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
 
-es_agent = create_openai_functions_agent(llm, es_tools, es_prompt)
-es_agent_executor = AgentExecutor(agent=es_agent, tools=es_tools, verbose=True)
+class IndexDataInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    size: int = Field(5, description="Number of documents to retrieve")
 
-# Define the graph state
-class GraphState(TypedDict):
-    """
-    Represents the state of our graph.
-    Attributes:
-        question: question
-        generation: LLM generation
-        documents: list of documents
-        sql_result: result from SQL agent
-        es_result: result from ElasticSearch agent
-    """
-    question: str
-    generation: str
-    documents: List[Document]
-    sql_result: str
-    es_result: str
+class SearchToolInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    query: str = Field(..., description="Elasticsearch JSON query")
+    from_: int = Field(0, description="Starting record index")
+    size: int = Field(10, description="Number of records to retrieve")
 
-# Define nodes
-def retrieve_from_sql(state: GraphState):
-    """Retrieve data from SQL database using the SQL agent."""
-    print("---RETRIEVING FROM SQL---")
-    question = state["question"]
-    result = sql_agent.invoke({"input": question})
-    return {"sql_result": result["output"]}
+def list_indices(separator: str = ", ") -> str:
+    try:
+        indices = list(cfg.es.indices.get(index="*").keys())
+        return f"Available indices:{separator}{separator.join(indices)}"
+    except Exception as e:
+        return f"Error listing indices: {str(e)}"
 
-def retrieve_from_es(state: GraphState):
-    """Retrieve data from ElasticSearch using the ES agent."""
-    print("---RETRIEVING FROM ELASTICSEARCH---")
-    question = state["question"]
-    result = es_agent_executor.invoke({"input": question})
-    return {"es_result": result["output"]}
+def get_index_details(index_name: str) -> str:
+    try:
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        details = {
+            "aliases": cfg.es.indices.get_alias(index=index_name).get(index_name, {}).get("aliases", {}),
+            "mappings": cfg.es.indices.get_mapping(index=index_name).get(index_name, {}).get("mappings", {}),
+            "settings": cfg.es.indices.get_settings(index=index_name).get(index_name, {}).get("settings", {})
+        }
+        return json.dumps(details, indent=2)
+    except Exception as e:
+        return f"Error getting index details: {str(e)}"
 
-def route_question(state: GraphState):
-    """
-    Route question to SQL or ElasticSearch based on the question content.
-    """
-    print("---ROUTING QUESTION---")
-    question = state["question"]
-    source = structured_llm_router.invoke({"question": question})
-    
-    if source.datasource == "sql_db":
-        print("---ROUTING TO SQL AGENT---")
-        return "sql_agent"
-    elif source.datasource == "elasticsearch":
-        print("---ROUTING TO ELASTICSEARCH AGENT---")
-        return "es_agent"
+def get_index_data(index_name: str, size: int = 5) -> str:
+    try:
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        result = cfg.es.search(
+            index=index_name,
+            body={"query": {"match_all": {}}},
+            size=min(size, cfg.elastic_index_data_max_size)
+        )
+        hits = result.get('hits', {}).get('hits', [])
+        if not hits:
+            return f"No documents found in index '{index_name}'"
+        return json.dumps([hit['_source'] for hit in hits[:size]], indent=2)
+    except Exception as e:
+        return f"Error getting index data: {str(e)}"
 
-def decide_result(state: GraphState):
-    """
-    Decide which result to use if both agents were run,
-    or format the single result if only one was run.
-    """
-    print("---DECIDING BEST RESULT---")
-    sql_res = state.get("sql_result", "")
-    es_res = state.get("es_result", "")
-    
-    if sql_res and es_res:
-        # Both results available - choose the more comprehensive one
-        if len(sql_res) > len(es_res):
-            return {"generation": f"SQL Database provided the most comprehensive answer:\n\n{sql_res}"}
+def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) -> str:
+    try:
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        size = min(cfg.elastic_index_data_max_size, size)
+        try:
+            query_dict = json.loads(query)
+        except json.JSONDecodeError:
+            return "Invalid query format - must be valid JSON"
+
+        is_aggregation = "aggs" in query_dict or "aggregations" in query_dict
+        if is_aggregation:
+            size = cfg.aggs_limit
+
+        result = cfg.es.search(
+            index=index_name,
+            body=query_dict,
+            from_=from_,
+            size=size
+        )
+        if is_aggregation:
+            return json.dumps(result.get('aggregations', {}), indent=2)
         else:
-            return {"generation": f"ElasticSearch provided the most comprehensive answer:\n\n{es_res}"}
-    elif sql_res:
-        return {"generation": f"SQL Database result:\n\n{sql_res}"}
-    elif es_res:
-        return {"generation": f"ElasticSearch result:\n\n{es_res}"}
-    else:
-        return {"generation": "No results found from either data source."}
+            return json.dumps(result.get('hits', {}), indent=2)
+    except Exception as e:
+        return f"Search error: {str(e)}"
 
-# Build the workflow
-workflow = StateGraph(GraphState)
+from langchain.tools import StructuredTool
 
-# Add nodes
-workflow.add_node("route_question", route_question)
-workflow.add_node("sql_agent", retrieve_from_sql)
-workflow.add_node("es_agent", retrieve_from_es)
-workflow.add_node("decide_result", decide_result)
+tools = [
+    StructuredTool.from_function(func=list_indices, name="elastic_list_indices", description="Lists all available Elasticsearch indices. Always call this first.", args_schema=ListIndicesInput),
+    StructuredTool.from_function(func=get_index_details, name="elastic_index_details", description="Gets details about a specific index including mappings and settings", args_schema=IndexDetailsInput),
+    StructuredTool.from_function(func=get_index_data, name="elastic_index_data", description="Gets sample documents from an index to understand its structure", args_schema=IndexDataInput),
+    StructuredTool.from_function(func=elastic_search, name="elastic_search", description="Executes search or aggregation queries on an Elasticsearch index", args_schema=SearchToolInput),
+]
 
-# Add edges
-workflow.add_edge("sql_agent", "decide_result")
-workflow.add_edge("es_agent", "decide_result")
-workflow.add_edge("decide_result", END)
+# === Elasticsearch Agent ===
+def get_system_prompt(question: str) -> str:
+    return f"""
+    You are an Elasticsearch expert assistant. Follow these steps for every request:
+    1. First list all available indices using elastic_list_indices
+    2. Then examine index details or sample data as needed
+    3. Finally execute specific searches when you understand the data structure
+    Make sure you understand the index structure before querying data.
+    Question to answer: {question}
+    """
 
-# Conditional edges from router
-workflow.add_conditional_edges(
-    "route_question",
-    route_question,
-    {
-        "sql_agent": "sql_agent",
-        "es_agent": "es_agent",
-    }
+def create_elastic_agent_executor() -> AgentExecutor:
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content="You are a helpful AI ElasticSearch Expert Assistant"),
+        ("user", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad")
+    ])
+    agent = create_openai_functions_agent(llm=cfg.llm, tools=tools, prompt=prompt)
+    return AgentExecutor(agent=agent, tools=tools, verbose=cfg.langchain_verbose, max_iterations=15, handle_parsing_errors=True, return_intermediate_steps=True)
+
+# === SQL Agent ===
+sql_agent = create_sql_agent(
+    llm=cfg.llm,
+    toolkit=SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm),
+    verbose=cfg.langchain_verbose,
+    handle_parsing_errors=True
 )
 
-# Set entry point
-workflow.set_entry_point("route_question")
+# === Decision Agent ===
+def route_question(question: str) -> str:
+    q_lower = question.lower()
+    if any(k in q_lower for k in ["table", "sql", "database", "record", "column", "employee", "department"]):
+        return "sql"
+    elif any(k in q_lower for k in ["index", "elasticsearch", "search", "document", "query"]):
+        return "elastic"
+    else:
+        return "sql"  # default fallback
 
-# Compile the graph
-app = workflow.compile()
+# === Main Interface ===
+def run_agent(question: str):
+    route = route_question(question)
+    if route == "sql":
+        return sql_agent.invoke({"input": question})
+    elif route == "elastic":
+        elastic_agent = create_elastic_agent_executor()
+        return elastic_agent.invoke({"input": question})
+    else:
+        return {"output": "Unable to determine which agent to use."}
 
-# Run the agent
-def run_decision_agent(question: str):
-    result = app.invoke({"question": question})
-    return result["generation"]
-
-# Example usage
-if __name__ == "__main__":
-    while True:
-        user_query = input("Enter your query (or 'quit' to exit): ")
-        if user_query.lower() == 'quit':
-            break
-        print("\nProcessing your query...\n")
-        response = run_decision_agent(user_query)
-        print("\nResponse:")
-        print(response)
-        print("\n" + "="*50 + "\n")
+# Example usage:
+# response = run_agent("List all departments from the database")
+# print(response["output"])
