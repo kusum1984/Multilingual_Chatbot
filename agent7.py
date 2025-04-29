@@ -1387,3 +1387,74 @@ if __name__ == "__main__":
             print("\n" + "="*80 + "\n")
     
     asyncio.run(main())
+*******************************
+def run_parallel_queries(state: State) -> Dict[str, Any]:
+    """Execute both agents in parallel and collect results with metrics."""
+    question = state["question"]
+    
+    def run_agent(agent_func, input_data, agent_type):
+        import time
+        start_time = time.time()
+        try:
+            # For Elasticsearch agent, we need to ensure proper input format
+            if agent_type == "es":
+                # Create proper input structure for Elasticsearch agent
+                agent_input = {
+                    "input": input_data,
+                    "chat_history": [],
+                    "agent_scratchpad": []
+                }
+            else:
+                agent_input = {"input": input_data}
+                
+            result = agent_func(agent_input)
+            elapsed = time.time() - start_time
+            
+            # For Elasticsearch agent, we need to handle the output format
+            if agent_type == "es":
+                if isinstance(result, dict) and "output" in result:
+                    output = result["output"]
+                elif isinstance(result, dict) and "intermediate_steps" in result:
+                    # Handle case where agent returns intermediate steps
+                    last_step = result["intermediate_steps"][-1] if result["intermediate_steps"] else None
+                    output = last_step[1] if last_step else "No results found"
+                else:
+                    output = str(result)
+            else:
+                output = result.get("output", "") if isinstance(result, dict) else str(result)
+            
+            confidence = min(0.3 + (len(output) / 1000), 0.95)
+            
+            return {
+                "result": output,
+                "time": elapsed,
+                "confidence": confidence,
+                "error": None
+            }
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {
+                "result": str(e),
+                "time": elapsed,
+                "confidence": 0.0,
+                "error": str(e)
+            }
+    
+    with ThreadPoolExecutor() as executor:
+        sql_future = executor.submit(run_agent, sql_agent.invoke, question, "sql")
+        es_future = executor.submit(run_agent, es_agent_executor.invoke, question, "es")
+        
+        sql_response = sql_future.result()
+        es_response = es_future.result()
+    
+    return {
+        "question": question,
+        "sql_result": sql_response["result"],
+        "es_result": es_response["result"],
+        "sql_confidence": sql_response["confidence"],
+        "es_confidence": es_response["confidence"],
+        "sql_time": sql_response["time"],
+        "es_time": es_response["time"],
+        "sql_error": sql_response["error"],
+        "es_error": es_response["error"]
+    }
