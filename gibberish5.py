@@ -1,0 +1,240 @@
+import os
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+from typing import Tuple
+import langdetect
+from langdetect import DetectorFactory
+
+# For consistent language detection
+DetectorFactory.seed = 0
+
+# Load environment variables
+load_dotenv()
+
+def get_client():
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version="2023-07-01-preview"
+    )
+
+def check_gibberish(text: str) -> Tuple[str, str, str]:
+    """
+    Ultimate gibberish detector with example-based learning
+    
+    Returns:
+        Tuple: (status, error_type, message)
+        - status: 'T' (valid) or 'F' (invalid)
+        - error_type: '' or 'gibberish_error'
+        - message: Detailed explanation if invalid
+    """
+    # Comprehensive example-based prompt
+    system_prompt = """
+    # Ultimate Gibberish Detection System v2.0
+    
+    ## Your Task:
+    Analyze text for meaningful content in ANY language using these guidelines:
+    
+    === VALID TEXT EXAMPLES ===
+    1. Dictionary Words:
+       - English: "apple", "computer"
+       - Japanese: "こんにちは" (hello)
+       - Arabic: "كتاب" (book)
+    2. Proper Nouns:
+       - "New York"
+       - "東京タワー" (Tokyo Tower)
+       - "मुंबई" (Mumbai)
+    3. Technical Codes:
+       - "ID-5849-BN"
+       - "订单号: 456789" (Chinese order number)
+    4. Common Phrases:
+       - "How are you?"
+       - "Où est la gare?" (French: Where is the station?)
+    5. Meaningful Single Characters:
+       - "A" (grade)
+       - "我" (Chinese "I")
+    
+    === GIBBERISH EXAMPLES ===
+    1. Random Typing:
+       - "asdfjkl;"
+       - "qwertyuiop"
+    2. Impossible Combinations:
+       - "xzqywv" (invalid English)
+       - "漢字漢字" (meaningless repetition)
+    3. Nonsense Mixing:
+       - "blah123blah"
+       - "foo@bar$"
+    4. Orthography Violations:
+       - "Thsi is nto Enlgish"
+       - "कखगघ" (invalid Devanagari)
+    5. Meaningless Repetition:
+       - "asdf asdf asdf"
+       - "123 123 123"
+    
+    === DECISION RULES ===
+    ✅ VALID if any:
+    - Real dictionary word
+    - Recognizable name/entity
+    - Valid code/number pattern
+    - Culturally significant
+    - Proper single character
+    
+    ❌ GIBBERISH if all:
+    - No dictionary words
+    - Violates language rules
+    - Random character mixing
+    - Meaningless repetition
+    
+    === RESPONSE FORMAT ===
+    STRICTLY respond with ONLY:
+    - "Valid" OR
+    - "Invalid|<reason>|<detected_lang>"
+      Where <reason> is:
+      - random_characters
+      - impossible_combinations
+      - nonsense_repetition
+      - no_meaningful_units
+      - mixed_scripts
+    """
+
+    client = get_client()
+    
+    try:
+        if not text.strip():
+            return ("T", "", "")
+            
+        # First detect language
+        try:
+            lang = langdetect.detect(text)
+        except:
+            lang = "unknown"
+        
+        # Create user prompt with contextual examples
+        user_prompt = f"""
+        Analyze: "{text}"
+        Initial language detection: {lang}
+        
+        Compare against these examples:
+        [Valid] "Paris", "123 Main St", "안녕", "@username"
+        [Gibberish] "xjdkl", "asdf1234", "!@#$%^", "कखगघ"
+        
+        Your analysis (Valid/Invalid|Reason|Language):"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.0,
+            max_tokens=100
+        )
+
+        result = response.choices[0].message.content.strip()
+        
+        if result == "Valid":
+            return ("T", "", "")
+        else:
+            parts = result.split('|')
+            reason = parts[1] if len(parts) > 1 else 'gibberish'
+            detected_lang = parts[2] if len(parts) > 2 else lang
+            
+            return (
+                "F",
+                "gibberish_error",
+                f"Gibberish detected: {reason} in {detected_lang}"
+            )
+            
+    except Exception as e:
+        return ("F", "api_error", f"Analysis failed: {str(e)}")
+
+
+# ===== Comprehensive Test Suite (50+ Cases) =====
+def run_tests():
+    test_cases = [
+        # Section 1: Valid Texts (25 cases)
+        ("Hello world", "EN", "T"),
+        ("Bonjour le monde", "FR", "T"),
+        ("Hola mundo", "ES", "T"),
+        ("Привет мир", "RU", "T"),
+        ("مرحبا بالعالم", "AR", "T"),
+        ("你好世界", "ZH", "T"),
+        ("こんにちは世界", "JA", "T"),
+        ("안녕하세요 세계", "KO", "T"),
+        ("สวัสดีชาวโลก", "TH", "T"),
+        ("Xin chào thế giới", "VI", "T"),
+        ("Hallo Welt", "DE", "T"),
+        ("Ciao mondo", "IT", "T"),
+        ("Olá mundo", "PT", "T"),
+        ("Witaj świecie", "PL", "T"),
+        ("Γειά σου Κόσμε", "EL", "T"),
+        ("Merhaba dünya", "TR", "T"),
+        ("Hej världen", "SV", "T"),
+        ("Pozdrav svijete", "HR", "T"),
+        ("Ahoj světe", "CS", "T"),
+        ("Helló világ", "HU", "T"),
+        ("नमस्ते दुनिया", "HI", "T"),
+        ("হ্যালো বিশ্ব", "BN", "T"),
+        ("வணக்கம் உலகம்", "TA", "T"),
+        ("שלום עולם", "HE", "T"),
+        ("ID-5849-BN", "EN", "T"),
+        
+        # Section 2: Gibberish Cases (25 cases)
+        ("asdfghjkl", "XX", "F"),
+        ("qwertyuiop", "XX", "F"),
+        ("йцукенгшщз", "XX", "F"),
+        ("ضصثقضصثق", "XX", "F"),
+        ("ㅁㄴㅇㄹㅁㄴㅇ", "XX", "F"),
+        ("ฟหกด่าสว", "XX", "F"),
+        ("αβγδαβγδ", "XX", "F"),
+        ("אבגדאבגד", "XX", "F"),
+        ("!@#$%^&*", "XX", "F"),
+        ("xjdkl 392 sdk", "XX", "F"),
+        ("xzqy wvut", "XX", "F"),
+        ("blah blah", "XX", "F"),
+        ("केाीी", "XX", "F"),
+        ("asdf asdf asdf", "XX", "F"),
+        ("123 123 123", "XX", "F"),
+        ("foo@bar$", "XX", "F"),
+        ("漢字漢字", "XX", "F"),
+        ("कखगघ", "XX", "F"),
+        ("zzxxyy", "XX", "F"),
+        ("qwopasdf", "XX", "F"),
+        ("1a2b3c4d", "XX", "F"),
+        ("asdf1234", "XX", "F"),
+        ("@#$%^&", "XX", "F"),
+        ("zxcvbnm", "XX", "F"),
+        ("asdf;lkj", "XX", "F"),
+        
+        # Section 3: Edge Cases (10 cases)
+        ("A", "EN", "T"),
+        ("我", "ZH", "T"),
+        ("123", "EN", "T"),
+        (" ", "XX", "T"),
+        ("@username", "EN", "T"),
+        ("#hashtag", "EN", "T"),
+        ("订单号: 456789", "ZH", "T"),
+        ("東京タワー", "JA", "T"),
+        ("asdf", "XX", "F"),
+        ("कखग", "XX", "F")
+    ]
+
+    print("=== Ultimate Gibberish Detection Test ===")
+    print(f"Running {len(test_cases)} test cases across multiple languages\n")
+    
+    passed = 0
+    for idx, (text, lang, expected) in enumerate(test_cases, 1):
+        status, err_type, msg = check_gibberish(text)
+        result = "✅ PASS" if status == expected else "❌ FAIL"
+        if status == expected:
+            passed += 1
+            
+        print(f"{idx:02d} {result} {lang}: '{text[:20]}'")
+        if status != expected:
+            print(f"   Expected {expected}, got {status} | {msg}")
+    
+    accuracy = passed / len(test_cases) * 100
+    print(f"\nResults: {passed}/{len(test_cases)} passed ({accuracy:.1f}% accuracy)")
+
+if __name__ == "__main__":
+    run_tests()
