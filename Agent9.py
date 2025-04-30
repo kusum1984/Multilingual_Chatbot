@@ -219,44 +219,55 @@ sql_agent = create_agent(
 
 # ===== GRAPH SETUP =====
 def agent_node(state, agent, name):
-    result = agent.invoke(state)
-    if not isinstance(result, FunctionMessage):
-        result = HumanMessage(**result.dict(exclude={"type", "name"}), name=name)
-    return {"messages": [result], "sender": name}
+    response = agent.invoke(state)
+    if isinstance(response, FunctionMessage):
+        return {"messages": [response], "sender": name}
+    else:
+        return {"messages": [HumanMessage(**response.dict(exclude={"type", "name"}), name=name)], "sender": name}
 
 def router(state):
     messages = state["messages"]
     last_message = messages[-1]
-    
-    # Check for termination conditions
-    if any("FINAL ANSWER" in msg.content for msg in messages):
-        return "end"
-    if len(messages) > 10:
+
+    # Final answer detection
+    if isinstance(last_message, BaseMessage) and "FINAL ANSWER" in last_message.content:
         return "end"
     
-    # Route tool calls
-    if hasattr(last_message, 'additional_kwargs') and last_message.additional_kwargs.get('function_call'):
+    # Limit interactions to avoid loops (3 exchanges = 6 messages)
+    human_msg_count = sum(1 for m in messages if isinstance(m, HumanMessage))
+    if human_msg_count >= 3:
+        return "end"
+    
+    # Route based on tool call
+    if "function_call" in last_message.additional_kwargs:
         return "call_tool"
     
+    # Default flow
     return "continue"
 
 def tool_node(state):
     messages = state["messages"]
     last_message = messages[-1]
-    
+
     try:
         tool_input = json.loads(last_message.additional_kwargs["function_call"]["arguments"])
         if len(tool_input) == 1 and "__arg1" in tool_input:
-            tool_input = next(iter(tool_input.values()))
-        
+            tool_input = list(tool_input.values())[0]
+
         action = ToolInvocation(
             tool=last_message.additional_kwargs["function_call"]["name"],
             tool_input=tool_input
         )
         response = tool_executor.invoke(action)
-        return {"messages": [FunctionMessage(content=str(response), name=action.tool)]}
+        return {
+            "messages": [FunctionMessage(content=str(response), name=action.tool)],
+            "sender": state["sender"]  # maintain original sender
+        }
     except Exception as e:
-        return {"messages": [FunctionMessage(content=f"Tool error: {str(e)}", name="error")]}
+        return {
+            "messages": [FunctionMessage(content=f"Tool error: {str(e)}", name="error")],
+            "sender": state["sender"]
+        }
 
 # Build workflow
 workflow = StateGraph(AgentState)
@@ -286,32 +297,24 @@ graph = workflow.compile()
 
 # ===== EXECUTION =====
 def execute_query(question: str):
+    print(f"\nExecuting query: {question}")
     try:
-        print(f"\nExecuting: {question}")
-        final_state = None
-        
         for step in graph.stream(
-            {"messages": [HumanMessage(content=question)]},
+            {"messages": [HumanMessage(content=question)], "sender": "user"},
             {"recursion_limit": cfg.max_recursion}
         ):
-            print("\n=== STEP ===")
+            print("\n=== AGENT STEP ===")
             print(step)
-            final_state = step
-            
-            # Early termination
-            if any("FINAL ANSWER" in str(msg) for msg in step.get("messages", [])):
-                break
-        
-        # Format final output
-        if final_state:
-            answers = [msg.content for msg in final_state["messages"] if "FINAL ANSWER" in msg.content]
-            return {
-                "status": "success",
-                "answer": answers[-1] if answers else "\n".join([msg.content for msg in final_state["messages"][-2:]]),
-                "steps": len(final_state["messages"])
-            }
-        return {"status": "completed", "answer": "No final answer generated"}
-    
+
+            if any("FINAL ANSWER" in msg.content for msg in step.get("messages", []) if isinstance(msg, BaseMessage)):
+                print("\n✅ FINAL ANSWER DETECTED - TERMINATING")
+                return {
+                    "status": "success",
+                    "answer": next(msg.content for msg in step["messages"] if "FINAL ANSWER" in msg.content),
+                    "steps": len(step["messages"])
+                }
+
+        return {"status": "completed", "answer": "No final answer within recursion limit"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
