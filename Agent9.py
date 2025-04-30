@@ -18,7 +18,7 @@ from langchain.sql_database import SQLDatabase
 from sqlalchemy import create_engine
 import urllib.parse
 
-# ========== CUSTOM IMPLEMENTATIONS ==========
+# ===== CUSTOM IMPLEMENTATIONS =====
 class ToolInvocation:
     def __init__(self, tool: str, tool_input: Dict[str, Any]):
         self.tool = tool
@@ -32,41 +32,48 @@ class ToolExecutor:
         tool = self.tools[tool_invocation.tool]
         return tool.invoke(tool_invocation.tool_input)
 
-# ========== CONFIGURATION ==========
+# ===== CONFIGURATION =====
 class Config:
     def __init__(self):
-        # Elasticsearch config
+        load_dotenv()
+        
+        # Elasticsearch
         self.es = Elasticsearch(
             os.getenv("ELASTIC_ENDPOINT"),
             api_key=os.getenv("ELASTIC_API_KEY"),
             verify_certs=False
         )
         
-        # LLM config
+        # Azure OpenAI
         self.llm = AzureChatOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             deployment_name="gpt-4",
-            model="gpt-4",
             temperature=0,
             max_retries=3
         )
         
-        # SQL config
+        # SQL Server
         driver = '{ODBC Driver 18 for SQL Server}'
-        conn = f"Driver={driver};Server={os.getenv('SQL_SERVER')};Database={os.getenv('SQL_DATABASE')};Uid={os.getenv('SQL_USER')};Pwd={os.getenv('SQL_PASSWORD')};Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
-        params = urllib.parse.quote_plus(conn)
-        conn_str = f'mssql+pyodbc:///?autocommit=true&odbc_connect={params}'
-        engine = create_engine(conn_str)
+        conn_str = (
+            f"Driver={driver};"
+            f"Server={os.getenv('SQL_SERVER')};"
+            f"Database={os.getenv('SQL_DATABASE')};"
+            f"Uid={os.getenv('SQL_USER')};"
+            f"Pwd={os.getenv('SQL_PASSWORD')};"
+            "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+        )
+        params = urllib.parse.quote_plus(conn_str)
+        engine = create_engine(f'mssql+pyodbc:///?autocommit=true&odbc_connect={params}')
         self.sql_db = SQLDatabase(engine, schema="comp")
 
-        # Execution parameters
-        self.max_recursion = 30  # Reduced from 50 to prevent long runs
-        self.max_docs = 5       # Reduced sample size
+        # Execution limits
+        self.max_recursion = 25
+        self.max_results = 5
 
 cfg = Config()
 
-# ========== ELASTICSEARCH TOOLS ==========
+# ===== ELASTICSEARCH TOOLS =====
 class ListIndicesInput(BaseModel):
     separator: str = Field(", ", description="Separator between index names")
 
@@ -75,15 +82,14 @@ class IndexDetailsInput(BaseModel):
 
 class SampleDataInput(BaseModel):
     index_name: str = Field(..., description="Name of the Elasticsearch index")
-    size: int = Field(3, description="Number of sample documents to retrieve")  # Reduced default
+    size: int = Field(3, description="Number of sample documents to retrieve")
 
 class SearchInput(BaseModel):
     index_name: str = Field(..., description="Name of the Elasticsearch index")
-    query: str = Field(..., description="Query in Elasticsearch JSON format")
-    size: int = Field(5, description="Maximum number of results to return")  # Reduced default
+    query: str = Field(..., description="Query in JSON format")
+    size: int = Field(5, description="Maximum results to return")
 
 def list_indices(separator: str = ", ") -> str:
-    """List all available indices in Elasticsearch"""
     try:
         indices = list(cfg.es.indices.get(index="*").keys())
         return f"Available indices:{separator}{separator.join(indices)}"
@@ -91,10 +97,9 @@ def list_indices(separator: str = ", ") -> str:
         return f"Error listing indices: {str(e)}"
 
 def get_index_details(index_name: str) -> str:
-    """Get detailed information about a specific index"""
     try:
         if not cfg.es.indices.exists(index=index_name):
-            return f"Index '{index_name}' does not exist"
+            return f"Index '{index_name}' doesn't exist"
         
         details = {
             "aliases": cfg.es.indices.get_alias(index=index_name).get(index_name, {}).get("aliases", {}),
@@ -103,80 +108,69 @@ def get_index_details(index_name: str) -> str:
         }
         return json.dumps(details, indent=2)
     except Exception as e:
-        return f"Error getting index details: {str(e)}"
+        return f"Error getting details: {str(e)}"
 
-def get_sample_data(index_name: str, size: int = 3) -> str:  # Reduced default size
-    """Get sample documents from an index"""
+def get_sample_data(index_name: str, size: int = 3) -> str:
     try:
         if not cfg.es.indices.exists(index=index_name):
-            return f"Index '{index_name}' does not exist"
+            return f"Index '{index_name}' doesn't exist"
         
         result = cfg.es.search(
             index=index_name,
             body={"query": {"match_all": {}}},
-            size=min(size, cfg.max_docs)
+            size=min(size, cfg.max_results)
         )
         hits = result.get('hits', {}).get('hits', [])
         if not hits:
-            return f"No documents found in index '{index_name}'"
+            return f"No documents in index '{index_name}'"
         
         samples = []
         for hit in hits[:size]:
-            sample = {k: v for k, v in hit['_source'].items() if not isinstance(v, (dict, list)) or not v}
-            samples.append(sample)
+            samples.append({k: v for k, v in hit['_source'].items() if not isinstance(v, (dict, list))})
         return json.dumps(samples, indent=2)
     except Exception as e:
-        return f"Error getting sample data: {str(e)}"
+        return f"Error getting samples: {str(e)}"
 
-def elastic_search(index_name: str, query: str, size: int = 5) -> str:  # Reduced default size
-    """Execute a search query against Elasticsearch"""
+def elastic_search(index_name: str, query: str, size: int = 5) -> str:
     try:
         if not cfg.es.indices.exists(index=index_name):
-            return f"Index '{index_name}' does not exist"
+            return f"Index '{index_name}' doesn't exist"
         
-        try:
-            query_dict = json.loads(query)
-        except json.JSONDecodeError:
-            return "Invalid query format - must be valid JSON"
-        
+        query_dict = json.loads(query)
         result = cfg.es.search(
             index=index_name,
             body=query_dict,
-            size=min(size, cfg.max_docs)
+            size=min(size, cfg.max_results)
         )
         hits = result.get('hits', {}).get('hits', [])
-        simplified_results = []
-        for hit in hits:
-            simplified = {k: v for k, v in hit['_source'].items() if not isinstance(v, (dict, list)) or not v}
-            simplified_results.append(simplified)
-        return json.dumps(simplified_results, indent=2)
+        return json.dumps([{k: v for k, v in hit['_source'].items() if not isinstance(v, (dict, list))} for hit in hits], indent=2)
     except Exception as e:
         return f"Search error: {str(e)}"
 
-# ========== AGENT SETUP ==========
+# ===== TOOL SETUP =====
 elastic_tools = [
     Tool.from_function(
         func=list_indices,
-        name="elastic_list_indices",
-        description="List all available Elasticsearch indices. Always call this first.",
+        name="list_es_indices",
+        description="List all Elasticsearch indices",
         args_schema=ListIndicesInput
     ),
     Tool.from_function(
         func=get_index_details,
-        name="elastic_index_details",
-        description="Get detailed information about a specific index including mappings and settings",
+        name="get_es_index_details",
+        description="Get details about an Elasticsearch index",
         args_schema=IndexDetailsInput
     ),
     Tool.from_function(
         func=get_sample_data,
-        name="elastic_sample_data",
-        description="Get sample documents from an index to understand its structure (limit 3 docs by default)",
+        name="get_es_sample_data",
+        description="Get sample documents from an index (default: 3 docs)",
         args_schema=SampleDataInput
     ),
     Tool.from_function(
         func=elastic_search,
-        name="elastic_search",
-        description="Execute search queries against Elasticsearch (limit 5 results by default)",
+        name="search_es_index",
+        description="Execute search queries (default: 5 results)",
         args_schema=SearchInput
     )
 ]
@@ -187,44 +181,43 @@ sql_tools = sql_toolkit.get_tools()
 all_tools = elastic_tools + sql_tools
 tool_executor = ToolExecutor(all_tools)
 
+# ===== AGENT SETUP =====
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     sender: str
 
 def create_agent(llm, tools, system_message: str):
     prompt = ChatPromptTemplate.from_messages([
-        ("system", f"""You are an expert assistant. Follow these rules STRICTLY:
-        1. Be concise and specific in your responses
-        2. Use the minimum necessary tools to answer
-        3. When you have enough information to answer, say "FINAL ANSWER: [your answer]"
-        4. If stuck after 2 attempts, say "FINAL ANSWER: I need human assistance"
-        5. Available tools: {", ".join([t.name for t in tools])}
+        ("system", f"""You are an expert assistant. Follow these rules:
+        1. Be concise and specific
+        2. Use minimal necessary tools
+        3. When done, say "FINAL ANSWER: [answer]"
+        4. If stuck, say "FINAL ANSWER: Need human help"
+        5. Tools: {", ".join([t.name for t in tools])}
         {system_message}"""),
         MessagesPlaceholder(variable_name="messages")
     ])
     return prompt | llm.bind_tools(tools)
 
 elastic_agent = create_agent(
-    cfg.llm, 
+    cfg.llm,
     elastic_tools,
-    """You are an Elasticsearch expert. Your responsibilities:
-    - First list available indices if needed
-    - Check index structure before querying
-    - Use minimal sample data to understand structure
-    - Return concise search results"""
+    """You are an Elasticsearch expert. Your rules:
+    - First check index existence
+    - Use minimal sample data
+    - Return concise results"""
 )
 
 sql_agent = create_agent(
     cfg.llm,
     sql_tools,
-    """You are a SQL expert. Your responsibilities:
-    - Verify table structure before querying
-    - Use minimal sample data to understand schema
-    - Return concise query results
-    - Add LIMIT clauses to prevent large results"""
+    """You are a SQL expert. Your rules:
+    - Check table structure first
+    - Use LIMIT in queries
+    - Return concise results"""
 )
 
-# ========== GRAPH EXECUTION ==========
+# ===== GRAPH SETUP =====
 def agent_node(state, agent, name):
     result = agent.invoke(state)
     if not isinstance(result, FunctionMessage):
@@ -235,19 +228,16 @@ def router(state):
     messages = state["messages"]
     last_message = messages[-1]
     
-    # Check for final answer
-    if "FINAL ANSWER" in last_message.content:
+    # Check for termination conditions
+    if any("FINAL ANSWER" in msg.content for msg in messages):
         return "end"
-    
-    # Prevent infinite loops
-    if len([m for m in messages if m.type == "human"]) > 3:  # Max 3 back-and-forths
+    if len(messages) > 10:
         return "end"
     
     # Route tool calls
-    if "function_call" in last_message.additional_kwargs:
+    if hasattr(last_message, 'additional_kwargs') and last_message.additional_kwargs.get('function_call'):
         return "call_tool"
     
-    # Default continue
     return "continue"
 
 def tool_node(state):
@@ -266,7 +256,7 @@ def tool_node(state):
         response = tool_executor.invoke(action)
         return {"messages": [FunctionMessage(content=str(response), name=action.tool)]}
     except Exception as e:
-        return {"messages": [FunctionMessage(content=f"Tool error: {str(e)}", name="system")]}
+        return {"messages": [FunctionMessage(content=f"Tool error: {str(e)}", name="error")]}
 
 # Build workflow
 workflow = StateGraph(AgentState)
@@ -294,35 +284,44 @@ workflow.add_conditional_edges(
 workflow.set_entry_point("Elasticsearch")
 graph = workflow.compile()
 
-# ========== EXECUTION HANDLER ==========
+# ===== EXECUTION =====
 def execute_query(question: str):
     try:
-        print(f"\nExecuting query: {question}")
+        print(f"\nExecuting: {question}")
+        final_state = None
+        
         for step in graph.stream(
             {"messages": [HumanMessage(content=question)]},
             {"recursion_limit": cfg.max_recursion}
         ):
-            print("\n=== AGENT STEP ===")
+            print("\n=== STEP ===")
             print(step)
+            final_state = step
             
-            # Early termination if final answer found
+            # Early termination
             if any("FINAL ANSWER" in str(msg) for msg in step.get("messages", [])):
-                print("\nFINAL ANSWER DETECTED - TERMINATING")
-                return step
+                break
         
-        return {"status": "completed", "messages": "No final answer within recursion limit"}
+        # Format final output
+        if final_state:
+            answers = [msg.content for msg in final_state["messages"] if "FINAL ANSWER" in msg.content]
+            return {
+                "status": "success",
+                "answer": answers[-1] if answers else "\n".join([msg.content for msg in final_state["messages"][-2:]]),
+                "steps": len(final_state["messages"])
+            }
+        return {"status": "completed", "answer": "No final answer generated"}
+    
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# ========== MAIN EXECUTION ==========
+# ===== MAIN =====
 if __name__ == "__main__":
-    load_dotenv()
-    
-    # Example query with clearer requirements
-    question = """Get customer contact information from Elasticsearch for customers 
+    # Example query
+    question = """Get active customers from Elasticsearch 'customers' index 
     who have made purchases over $1000 in the SQL database. 
-    Provide only the customer names and email addresses."""
+    Return: customer_id, name, email, total_purchases"""
     
     result = execute_query(question)
     print("\n=== FINAL RESULT ===")
-    print(result)
+    print(json.dumps(result, indent=2))
