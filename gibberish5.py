@@ -670,3 +670,207 @@ def run_tests():
 
 if __name__ == "__main__":
     run_tests()
+
+
+
+*******************************************************************
+import os
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+from typing import Tuple
+import langdetect
+from langdetect import DetectorFactory
+import pandas as pd
+from datetime import datetime
+
+# For consistent language detection
+DetectorFactory.seed = 0
+
+# Language code to name mapping
+LANGUAGE_NAMES = {
+    'en': 'English',
+    'fr': 'French',
+    'es': 'Spanish',
+    'ru': 'Russian',
+    'ar': 'Arabic',
+    'zh': 'Chinese',
+    'ja': 'Japanese',
+    'ko': 'Korean',
+    'hi': 'Hindi',
+    'bn': 'Bengali',
+    'pa': 'Punjabi',
+    'ta': 'Tamil',
+    'te': 'Telugu',
+    'mr': 'Marathi',
+    'ur': 'Urdu',
+    'gu': 'Gujarati',
+    'kn': 'Kannada',
+    'or': 'Odia',
+    'ml': 'Malayalam',
+    'de': 'German',
+    'it': 'Italian',
+    'pt': 'Portuguese',
+    'pl': 'Polish',
+    'tr': 'Turkish',
+    'nl': 'Dutch',
+    'sv': 'Swedish',
+    'fi': 'Finnish',
+    'da': 'Danish',
+    'no': 'Norwegian',
+    'he': 'Hebrew',
+    'fa': 'Persian',
+    'th': 'Thai',
+    'vi': 'Vietnamese',
+    'id': 'Indonesian',
+    'ms': 'Malay',
+    'fil': 'Filipino',
+    'sw': 'Swahili',
+    'ha': 'Hausa',
+    'yo': 'Yoruba',
+    'ig': 'Igbo',
+    'zu': 'Zulu',
+    'xh': 'Xhosa',
+    'st': 'Sotho',
+    'sn': 'Shona',
+    'am': 'Amharic',
+    'so': 'Somali',
+    'haw': 'Hawaiian',
+    'mi': 'Māori',
+    'sm': 'Samoan',
+    'to': 'Tongan',
+    'fj': 'Fijian',
+    'el': 'Greek',
+    'hu': 'Hungarian',
+    'cs': 'Czech',
+    'sk': 'Slovak',
+    'hr': 'Croatian',
+    'sr': 'Serbian',
+    'sl': 'Slovenian',
+    'bg': 'Bulgarian',
+    'uk': 'Ukrainian',
+    'be': 'Belarusian',
+    'kk': 'Kazakh',
+    'uz': 'Uzbek',
+    'ky': 'Kyrgyz',
+    'tg': 'Tajik',
+    'mn': 'Mongolian',
+    'bo': 'Tibetan',
+    'ne': 'Nepali',
+    'si': 'Sinhala',
+    'km': 'Khmer',
+    'lo': 'Lao',
+    'my': 'Burmese',
+    'ka': 'Georgian',
+    'hy': 'Armenian',
+    'az': 'Azerbaijani',
+    'tk': 'Turkmen',
+    'et': 'Estonian',
+    'lv': 'Latvian',
+    'lt': 'Lithuanian',
+    'cy': 'Welsh',
+    'ga': 'Irish',
+    'gd': 'Scottish Gaelic',
+    'mt': 'Maltese',
+    'eu': 'Basque',
+    'ca': 'Catalan',
+    'gl': 'Galician',
+    'af': 'Afrikaans',
+    'is': 'Icelandic',
+    'fo': 'Faroese',
+    'sa': 'Sanskrit',
+    'la': 'Latin',
+    'eo': 'Esperanto'
+}
+
+def get_language_name(lang_code):
+    """Convert language code to full name"""
+    return LANGUAGE_NAMES.get(lang_code, lang_code) if lang_code else "Gibberish"
+
+def get_client():
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version="2023-07-01-preview"
+    )
+
+def check_gibberish(text: str) -> Tuple[str, str, str]:
+    """[Previous implementation remains exactly the same]"""
+    # [Previous code here - unchanged]
+    pass
+
+def run_tests():
+    test_cases = [
+        # [Your existing test cases remain exactly the same]
+        # ...
+    ]
+
+    print("=== Ultimate Gibberish Detection Test ===")
+    print(f"Running {len(test_cases)} test cases across 50+ languages\n")
+    
+    # Prepare results dataframe
+    results = []
+    columns = [
+        'Language', 
+        'Word', 
+        'Expected Status', 
+        'Actual Status',
+        'Classification Result',
+        'Expected LangCode',
+        'Detected LangCode',
+        'Language Detection Result',
+        'Error Message',
+        'Timestamp'
+    ]
+    
+    for idx, (text, expected_status, expected_lang) in enumerate(test_cases, 1):
+        # Run detection
+        status, err_type, msg = check_gibberish(text)
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get detected language
+        detected_lang = None
+        lang_result = "N/A"
+        if expected_status == "T" and text.strip():
+            try:
+                detected_lang = langdetect.detect(text)
+                lang_result = "✅" if detected_lang == expected_lang else "❌"
+            except:
+                detected_lang = "Detection Failed"
+                lang_result = "❌"
+        
+        # Build result row with language names
+        results.append([
+            get_language_name(expected_lang) if expected_lang else "Gibberish",
+            text,
+            expected_status,
+            status,
+            "✅" if status == expected_status else "❌",
+            expected_lang if expected_lang else "N/A",
+            detected_lang if detected_lang else "N/A",
+            lang_result,
+            msg if status != expected_status else "",
+            timestamp
+        ])
+        
+        # Print progress
+        print(f"{idx:03d} Tested: '{text[:20]}'")
+    
+    # Create DataFrame
+    df = pd.DataFrame(results, columns=columns)
+    
+    # Save to Excel
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"gibberish_test_results_{timestamp}.xlsx"
+    df.to_excel(filename, index=False)
+    
+    # Calculate statistics
+    classification_acc = (df['Classification Result'] == '✅').mean() * 100
+    lang_acc = (df[df['Language Detection Result'] != 'N/A']['Language Detection Result'] == '✅').mean() * 100
+    
+    print(f"\n=== Final Results ===")
+    print(f"Classification Accuracy: {classification_acc:.1f}%")
+    print(f"Language Detection Accuracy: {lang_acc:.1f}%")
+    print(f"Results saved to {filename}")
+
+if __name__ == "__main__":
+    run_tests()
