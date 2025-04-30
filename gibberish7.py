@@ -935,7 +935,8 @@ if __name__ == "__main__":
 **********************************************************
 
 
-import os
+***************************************************
+        import os
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from typing import Tuple
@@ -943,99 +944,99 @@ import pandas as pd
 
 # Language-specific error messages with the exact required format
 ERROR_MESSAGES = {
-    'EN': "Langcode-EN expected error - The given English word is nonsense.",
-    'FR': "Langcode-FR expected error - Le mot français donné est un non-sens.",
-    'ES': "Langcode-ES expected error - El texto en español no tiene sentido.",
-    'RU': "Langcode-RU expected error - Данное русское слово бессмысленно.",
-    'AR': "Langcode-AR expected error - الكلمة العربية المعطاة غير منطقية.",
-    'ZH': "Langcode-ZH expected error - 中文文本是乱码。",
-    'JA': "Langcode-JA expected error - 日本語のテキストは無意味です。",
-    'KO': "Langcode-KO expected error - 주어진 한국어 단어는 무의미합니다.",
-    'HI': "Langcode-HI expected error - दिए गए हिंदी शब्द एक बकवास शब्द है।",
-    'BN': "Langcode-BN expected error - প্রদত্ত বাংলা শব্দটি অর্থহীন।",
-    'PA': "Langcode-PA expected error - ਦਿੱਤਾ ਪੰਜਾਬੀ ਸ਼ਬਦ ਬਕਵਾਸ ਹੈ।",
-    'TA': "Langcode-TA expected error - கொடுக்கப்பட்ட தமிழ் சொல் அர்த்தமற்றது.",
-    'TE': "Langcode-TE expected error - ఇచ్చిన తెలుగు పదం అర్థంలేనిది.",
-    'MR': "Langcode-MR expected error - दिलेले मराठी शब्द निरर्थक आहे.",
-    'UR': "Langcode-UR expected error - دیا گیا اردو لفظ بکواس ہے۔",
-    'GU': "Langcode-GU expected error - આપેલ ગુજરાતી શબ્દ નિરર્થક છે.",
-    'KN': "Langcode-KN expected error - ನೀಡಿದ ಕನ್ನಡ ಪದವು ಅರ್ಥಹೀನವಾಗಿದೆ.",
-    'OR': "Langcode-OR expected error - ଦିଆଯାଇଥିବା ଓଡିଆ ଶବ୍ଦ ଅର୍ଥହୀନ।",
-    'ML': "Langcode-ML expected error - നൽകിയ മലയാളം വാക്ക് അർത്ഥശൂന്യമാണ്.",
-    'DE': "Langcode-DE expected error - Das gegebene deutsche Wort ist sinnlos.",
-    'IT': "Langcode-IT expected error - La parola italiana data non ha senso.",
-    'PT': "Langcode-PT expected error - O texto em português é nonsense.",
-    'PL': "Langcode-PL expected error - Podane polskie słowo jest bez sensu.",
-    'TR': "Langcode-TR expected error - Verilen Türkçe kelime anlamsızdır.",
-    'NL': "Langcode-NL expected error - Het gegeven Nederlandse woord is onzin.",
-    'SV': "Langcode-SV expected error - Det givna svenska ordet är nonsens.",
-    'FI': "Langcode-FI expected error - Annettu suomenkielinen sana on järjetön.",
-    'DA': "Langcode-DA expected error - Det givne danske ord er nonsens.",
-    'NO': "Langcode-NO expected error - Det gitte norske ordet er nonsens.",
-    'HE': "Langcode-HE expected error - המילה העברית הנתונה היא חסרת משמעות.",
-    'FA': "Langcode-FA expected error - کلمه فارسی داده شده بی معنی است.",
-    'TH': "Langcode-TH expected error - คำภาษาไทยที่ให้มานั้นไร้ความหมาย",
-    'VI': "Langcode-VI expected error - Từ tiếng Việt đã cho là vô nghĩa.",
-    'ID': "Langcode-ID expected error - Kata bahasa Indonesia yang diberikan tidak masuk akal.",
-    'MS': "Langcode-MS expected error - Perkataan Melayu yang diberikan tidak bermakna.",
-    'FIL': "Langcode-FIL expected error - Ang ibinigay na salitang Filipino ay walang kahulugan.",
-    'SW': "Langcode-SW expected error - Neno la Kiswahili lililopewa halina maana.",
-    'HA': "Langcode-HA expected error - Kalmar Hausa da aka bayar ba ta da ma'ana.",
-    'YO': "Langcode-YO expected error - Ọrọ Yoruba ti a fun ni alailẹgbẹ.",
-    'IG': "Langcode-IG expected error - Okwu Igbo enyere enweghị isi.",
-    'ZU': "Langcode-ZU expected error - Igama lesiZulu elinikeziwe alinalo ukuqonda.",
-    'XH': "Langcode-XH expected error - Igama lesiXhosa elinikiweyo alinalo nto ithethayo.",
-    'ST': "Langcode-ST expected error - Lentsoe la Sesotho le fanoeng ha le na moelelo.",
-    'SN': "Langcode-SN expected error - Izwi reShona rakapihwa harina revo.",
-    'AM': "Langcode-AM expected error - የተሰጠው አማርኛ ቃል ምንም ትርጉም የለውም።",
-    'SO': "Langcode-SO expected error - Erayga Soomaaliga la siiyay ma lahan macno.",
-    'HAW': "Langcode-HAW expected error - ʻŌlelo Hawaiʻi i hāʻawi ʻia ʻaʻohe manaʻo.",
-    'MI': "Langcode-MI expected error - Ko te kupu Māori i hoatu kaore he tikanga.",
-    'SM': "Langcode-SM expected error - O le upu Samoa na tuʻuina atu e leai se uiga.",
-    'TO': "Langcode-TO expected error - Ko e lea faka-Tonga naʻe foaki ʻoku ʻikai ha ʻuhinga.",
-    'FJ': "Langcode-FJ expected error - Na vosa vakaviti e solia e sega ni ibalebale.",
-    'EL': "Langcode-EL expected error - Η δοθείσα ελληνική λέξη δεν έχει νόημα.",
-    'HU': "Langcode-HU expected error - Az adott magyar szó értelmetlen.",
-    'CS': "Langcode-CS expected error - Dané české slovo je nesmysl.",
-    'SK': "Langcode-SK expected error - Dané slovenské slovo je nezmysel.",
-    'HR': "Langcode-HR expected error - Dana hrvatska riječ je besmislena.",
-    'SR': "Langcode-SR expected error - Data srpska reč je besmislena.",
-    'SL': "Langcode-SL expected error - Dana slovenska beseda je nesmiselna.",
-    'BG': "Langcode-BG expected error - Дадената българска дума е безсмислена.",
-    'UK': "Langcode-UK expected error - Дане українське слово не має сенсу.",
-    'BE': "Langcode-BE expected error - Дадзенае беларускае слова бессэнсоўнае.",
-    'KK': "Langcode-KK expected error - Берілген қазақ сөзі мағынасыз.",
-    'UZ': "Langcode-UZ expected error - Berilgan o'zbekcha so'z mavhum.",
-    'KY': "Langcode-KY expected error - Берилген кыргыз сөзү маанисиз.",
-    'TG': "Langcode-TG expected error - Калимаи тоҷикӣ додашуда бе маъно аст.",
-    'MN': "Langcode-MN expected error - Өгсөн монгол үг утгагүй.",
-    'BO': "Langcode-BO expected error - བོད་སྐད་ཀྱི་ཚིག་དེ་དོན་མེད་པ་རེད།",
-    'NE': "Langcode-NE expected error - दिइएको नेपाली शब्द अर्थहीन छ।",
-    'SI': "Langcode-SI expected error - දෙන ලද සිංහල වචනය අර්ථ විරහිතය.",
-    'KM': "Langcode-KM expected error - ពាក្យខ្មែរដែលបានផ្តល់គឺគ្មានន័យ។",
-    'LO': "Langcode-LO expected error - ຄຳລາວທີ່ໃຫ້ແມ່ນບໍ່ມີຄວາມຫມາຍ.",
-    'MY': "Langcode-MY expected error - ပေးထားသော မြန်မာစကားလုံးသည် အဓိပ္ပါယ်မရှိပါ။",
-    'KA': "Langcode-KA expected error - მოცემული ქართული სიტყვა უაზროა.",
-    'HY': "Langcode-HY expected error - Տրված հայերեն բառն անիմաստ է։",
-    'AZ': "Langcode-AZ expected error - Verilən Azərbaycan sözü mənasızdır.",
-    'TK': "Langcode-TK expected error - Berlen Türkmen sözi manyşyz.",
-    'ET': "Langcode-ET expected error - Antud eesti sõna on mõttetu.",
-    'LV': "Langcode-LV expected error - Dotais latviešu vārds ir bezjēdzīgs.",
-    'LT': "Langcode-LT expected error - Pateiktas lietuvių kalbos žodis yra beprasmiškas.",
-    'CY': "Langcode-CY expected error - Mae'r gair Cymraeg a roddwyd yn ddiystyr.",
-    'GA': "Langcode-GA expected error - Tá an focal Gaeilge a tugadh gan bhrí.",
-    'GD': "Langcode-GD expected error - Tha am facal Gàidhlig a chaidh a thoirt seachad gun bhrìgh.",
-    'MT': "Langcode-MT expected error - Il-kelma Maltija mogħtija hija bla sens.",
-    'EU': "Langcode-EU expected error - Emandako euskal hitza zentzugabea da.",
-    'CA': "Langcode-CA expected error - La paraula catalana donada no té sentit.",
-    'GL': "Langcode-GL expected error - A palabra galega dada non ten sentido.",
-    'AF': "Langcode-AF expected error - Die gegewe Afrikaanse woord is nonsens.",
-    'IS': "Langcode-IS expected error - Gefið íslenskt orð er tilgangslaust.",
-    'FO': "Langcode-FO expected error - Heta føroyska orðið er menningarlaust.",
-    'SA': "Langcode-SA expected error - दत्तः संस्कृतशब्दः निरर्थकः अस्ति।",
-    'LA': "Langcode-LA expected error - Verbum Latinum datum inane est.",
-    'EO': "Langcode-EO expected error - La donita Esperanta vorto estas sensenca.",
-    'DEFAULT': "Langcode-XX expected error - The text appears to be gibberish."
+    'EN': "The given English word is nonsense.",
+    'FR': "Le mot français donné est un non-sens.",
+    'ES': "El texto en español no tiene sentido.",
+    'RU': "Данное русское слово бессмысленно.",
+    'AR': "الكلمة العربية المعطاة غير منطقية.",
+    'ZH': "中文文本是乱码。",
+    'JA': "日本語のテキストは無意味です。",
+    'KO': "주어진 한국어 단어는 무의미합니다.",
+    'HI': "दिए गए हिंदी शब्द एक बकवास शब्द है।",
+    'BN': "প্রদত্ত বাংলা শব্দটি অর্থহীন।",
+    'PA': "ਦਿੱਤਾ ਪੰਜਾਬੀ ਸ਼ਬਦ ਬਕਵਾਸ ਹੈ।",
+    'TA': "கொடுக்கப்பட்ட தமிழ் சொல் அர்த்தமற்றது.",
+    'TE': "ఇచ్చిన తెలుగు పదం అర్థంలేనిది.",
+    'MR': "दिलेले मराठी शब्द निरर्थक आहे.",
+    'UR': "دیا گیا اردو لفظ بکواس ہے۔",
+    'GU': "આપેલ ગુજરાતી શબ્દ નિરર્થક છે.",
+    'KN': "ನೀಡಿದ ಕನ್ನಡ ಪದವು ಅರ್ಥಹೀನವಾಗಿದೆ.",
+    'OR': "ଦିଆଯାଇଥିବା ଓଡିଆ ଶବ୍ଦ ଅର୍ଥହୀନ।",
+    'ML': "നൽകിയ മലയാളം വാക്ക് അർത്ഥശൂന്യമാണ്.",
+    'DE': "Das gegebene deutsche Wort ist sinnlos.",
+    'IT': "La parola italiana data non ha senso.",
+    'PT': "O texto em português é nonsense.",
+    'PL': "Podane polskie słowo jest bez sensu.",
+    'TR': "Verilen Türkçe kelime anlamsızdır.",
+    'NL': "Het gegeven Nederlandse woord is onzin.",
+    'SV': "Det givna svenska ordet är nonsens.",
+    'FI': "Annettu suomenkielinen sana on järjetön.",
+    'DA': "Det givne danske ord er nonsens.",
+    'NO': "Det gitte norske ordet er nonsens.",
+    'HE': "המילה העברית הנתונה היא חסרת משמעות.",
+    'FA': "کلمه فارسی داده شده بی معنی است.",
+    'TH': "คำภาษาไทยที่ให้มานั้นไร้ความหมาย",
+    'VI': "Từ tiếng Việt đã cho là vô nghĩa.",
+    'ID': "Kata bahasa Indonesia yang diberikan tidak masuk akal.",
+    'MS': "Perkataan Melayu yang diberikan tidak bermakna.",
+    'FIL': "Ang ibinigay na salitang Filipino ay walang kahulugan.",
+    'SW': "Neno la Kiswahili lililopewa halina maana.",
+    'HA': "Kalmar Hausa da aka bayar ba ta da ma'ana.",
+    'YO': "Ọrọ Yoruba ti a fun ni alailẹgbẹ.",
+    'IG': "Okwu Igbo enyere enweghị isi.",
+    'ZU': "Igama lesiZulu elinikeziwe alinalo ukuqonda.",
+    'XH': "Igama lesiXhosa elinikiweyo alinalo nto ithethayo.",
+    'ST': "Lentsoe la Sesotho le fanoeng ha le na moelelo.",
+    'SN': "Izwi reShona rakapihwa harina revo.",
+    'AM': "የተሰጠው አማርኛ ቃል ምንም ትርጉም የለውም።",
+    'SO': "Erayga Soomaaliga la siiyay ma lahan macno.",
+    'HAW': "ʻŌlelo Hawaiʻi i hāʻawi ʻia ʻaʻohe manaʻo.",
+    'MI': "Ko te kupu Māori i hoatu kaore he tikanga.",
+    'SM': "O le upu Samoa na tuʻuina atu e leai se uiga.",
+    'TO': "Ko e lea faka-Tonga naʻe foaki ʻoku ʻikai ha ʻuhinga.",
+    'FJ': "Na vosa vakaviti e solia e sega ni ibalebale.",
+    'EL': "Η δοθείσα ελληνική λέξη δεν έχει νόημα.",
+    'HU': "Az adott magyar szó értelmetlen.",
+    'CS': "Dané české slovo je nesmysl.",
+    'SK': "Dané slovenské slovo je nezmysel.",
+    'HR': "Dana hrvatska riječ je besmislena.",
+    'SR': "Data srpska reč je besmislena.",
+    'SL': "Dana slovenska beseda je nesmiselna.",
+    'BG': "Дадената българска дума е безсмислена.",
+    'UK': "Дане українське слово не має сенсу.",
+    'BE': "Дадзенае беларускае слова бессэнсоўнае.",
+    'KK': "Берілген қазақ сөзі мағынасыз.",
+    'UZ': "Berilgan o'zbekcha so'z mavhum.",
+    'KY': "Берилген кыргыз сөзү маанисиз.",
+    'TG': "Калимаи тоҷикӣ додашуда бе маъно аст.",
+    'MN': "Өгсөн монгол үг утгагүй.",
+    'BO': "བོད་སྐད་ཀྱི་ཚིག་དེ་དོན་མེད་པ་རེད།",
+    'NE': "दिइएको नेपाली शब्द अर्थहीन छ।",
+    'SI': "දෙන ලද සිංහල වචනය අර්ථ විරහිතය.",
+    'KM': "ពាក្យខ្មែរដែលបានផ្តល់គឺគ្មានន័យ។",
+    'LO': "ຄຳລາວທີ່ໃຫ້ແມ່ນບໍ່ມີຄວາມຫມາຍ.",
+    'MY': "ပေးထားသော မြန်မာစကားလုံးသည် အဓိပ္ပါယ်မရှိပါ။",
+    'KA': "მოცემული ქართული სიტყვა უაზროა.",
+    'HY': "Տրված հայերեն բառն անիմաստ է։",
+    'AZ': "Verilən Azərbaycan sözü mənasızdır.",
+    'TK': "Berlen Türkmen sözi manyşyz.",
+    'ET': "Antud eesti sõna on mõttetu.",
+    'LV': "Dotais latviešu vārds ir bezjēdzīgs.",
+    'LT': "Pateiktas lietuvių kalbos žodis yra beprasmiškas.",
+    'CY': "Mae'r gair Cymraeg a roddwyd yn ddiystyr.",
+    'GA': "Tá an focal Gaeilge a tugadh gan bhrí.",
+    'GD': "Tha am facal Gàidhlig a chaidh a thoirt seachad gun bhrìgh.",
+    'MT': "Il-kelma Maltija mogħtija hija bla sens.",
+    'EU': "Emandako euskal hitza zentzugabea da.",
+    'CA': "La paraula catalana donada no té sentit.",
+    'GL': "A palabra galega dada non ten sentido.",
+    'AF': "Die gegewe Afrikaanse woord is nonsens.",
+    'IS': "Gefið íslenskt orð er tilgangslaust.",
+    'FO': "Heta føroyska orðið er menningarlaust.",
+    'SA': "दत्तः संस्कृतशब्दः निरर्थकः अस्ति।",
+    'LA': "Verbum Latinum datum inane est.",
+    'EO': "La donita Esperanta vorto estas sensenca.",
+    'DEFAULT': "The text appears to be gibberish."
 }
 
 # Language code to name mapping
@@ -1145,10 +1146,18 @@ def get_client():
         api_version="2023-07-01-preview"
     )
 
-def process_gibberish_response(response_text: str) -> Tuple[str, str, str]:
+def format_error_response(word: str, lang_code: str) -> str:
+    """
+    Formats the error response in the exact required format
+    Example: "word-केाीी Langcode-HI expected error -दिए गए हिंदी शब्द एक बकवास शब्द है।"
+    """
+    error_msg = ERROR_MESSAGES.get(lang_code, ERROR_MESSAGES['DEFAULT'])
+    return f"word-{word} Langcode-{lang_code} expected error -{error_msg}"
+
+def process_gibberish_response(word: str, response_text: str) -> Tuple[str, str, str]:
     """
     Process the response from the gibberish detection API
-    Returns: (status, error_type, message)
+    Returns: (status, error_type, formatted_message)
     """
     if response_text == "Valid":
         return ("T", "", "")
@@ -1156,11 +1165,11 @@ def process_gibberish_response(response_text: str) -> Tuple[str, str, str]:
     parts = response_text.split('|')
     if len(parts) >= 3:
         lang_code = parts[1].upper()
-        reason = parts[2]
-        error_msg = ERROR_MESSAGES.get(lang_code, ERROR_MESSAGES['DEFAULT'])
-        return ("F", "gibberish_error", error_msg)
+        formatted_response = format_error_response(word, lang_code)
+        return ("F", "gibberish_error", formatted_response)
     
-    return ("F", "gibberish_error", ERROR_MESSAGES['DEFAULT'])
+    formatted_response = format_error_response(word, "XX")
+    return ("F", "gibberish_error", formatted_response)
 
 def get_system_prompt():
     return """
@@ -1218,12 +1227,23 @@ def get_system_prompt():
     - Violates language rules
     - Random character mixing
     - Meaningless repetition
+    
+    === RESPONSE FORMAT ===
+    You MUST respond in EXACTLY one of these formats:
+    - "Valid" (if the text is meaningful)
+    - "Invalid|<reason>|<detected_lang>" (if the text is gibberish)
+    Where <reason> is one of:
+    - random_characters
+    - impossible_combinations
+    - nonsense_repetition
+    - no_meaningful_units
+    - mixed_scripts
+    And <detected_lang> is the 2-letter language code if detectable, or "XX" if unknown
     """
 
 def check_gibberish(text: str) -> Tuple[str, str, str]:
     """
-    Gibberish detector that returns formatted error messages
-    
+    Gibberish detector that returns formatted responses
     Returns:
         Tuple: (status, error_type, message)
         - status: 'T' (valid) or 'F' (invalid)
@@ -1243,7 +1263,7 @@ def check_gibberish(text: str) -> Tuple[str, str, str]:
         [Valid] "Paris", "123 Main St", "안녕", "@username"
         [Gibberish] "xjdkl", "asdf1234", "!@#$%^", "कखगघ"
         
-        Your analysis (Valid/Invalid|Reason|Language):"""
+        Your analysis (must use exact response format):"""
         
         response = client.chat.completions.create(
             model="gpt-4",
@@ -1256,10 +1276,11 @@ def check_gibberish(text: str) -> Tuple[str, str, str]:
         )
 
         result = response.choices[0].message.content.strip()
-        return process_gibberish_response(result)
+        return process_gibberish_response(text, result)
             
     except Exception as e:
-        return ("F", "api_error", ERROR_MESSAGES['DEFAULT'])
+        formatted_response = format_error_response(text, "XX")
+        return ("F", "api_error", formatted_response)
 
 def run_tests():
     test_cases = [
@@ -1359,10 +1380,7 @@ def run_tests():
     print(f"\n=== Results saved to {filename} ===")
     print("Sample output for Hindi gibberish case:")
     hindi_case = df[df['Word'] == "केाीी"].iloc[0]
-    print(f"Word: {hindi_case['Word']}")
-    print(f"Error Message: {hindi_case['Error Message']}")
-    print(f"Lang code: {hindi_case['Lang code']}")
-    print(f"Language Name: {hindi_case['Language Name']}")
+    print(hindi_case['Error Message'])  # This will print in your exact requested format
 
 if __name__ == "__main__":
     load_dotenv()
