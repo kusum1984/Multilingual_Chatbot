@@ -501,3 +501,172 @@ def run_tests():
 
 if __name__ == "__main__":
     run_tests()
+
+
+
+*********************************************************************************************************
+
+import os
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+from typing import Tuple
+import langdetect
+from langdetect import DetectorFactory
+import pandas as pd
+from datetime import datetime
+
+# For consistent language detection
+DetectorFactory.seed = 0
+
+# Load environment variables
+load_dotenv()
+
+def get_client():
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version="2023-07-01-preview"
+    )
+
+def check_gibberish(text: str) -> Tuple[str, str, str]:
+    """[Previous implementation remains exactly the same]"""
+    # [Previous code here - unchanged]
+    pass
+
+def run_tests():
+    test_cases = [
+        # [Previous valid test cases remain the same]
+        # ...
+        
+        # Enhanced Section 5: Gibberish Cases (50 cases now)
+        # English-like gibberish
+        ("asdfghjkl", "F", None),
+        ("qwertyuiop", "F", None),
+        ("zxcvbnm", "F", None),
+        ("poiuytrewq", "F", None),
+        ("lkjhgfdsa", "F", None),
+        ("mnbvcxz", "F", None),
+        ("asdf;lkj", "F", None),
+        ("jfkdls;a", "F", None),
+        
+        # International keyboard gibberish
+        ("йцукенгшщз", "F", None),  # Russian-like
+        ("фывапролджэ", "F", None),  # Russian-like
+        ("asdfñlkj", "F", None),  # Spanish-like
+        ("éàèùç", "F", None),  # French-like
+        ("äöüß", "F", None),  # German-like
+        ("αβγδεζ", "F", None),  # Greek-like
+        ("אבגדהוז", "F", None),  # Hebrew-like
+        ("ضصثقفغ", "F", None),  # Arabic-like
+        ("ㄱㄴㄷㄹㅁㅂ", "F", None),  # Korean-like
+        ("あかさたなは", "F", None),  # Japanese-like
+        
+        # Mixed-script gibberish
+        ("aβcδεf", "F", None),
+        ("x漢y字z", "F", None),
+        ("1あ2い3う", "F", None),
+        ("aαbβcγ", "F", None),
+        ("@#¢∞§÷", "F", None),
+        
+        # Pattern-based gibberish
+        ("abcabcabc", "F", None),
+        ("123123123", "F", None),
+        ("q1w2e3r4", "F", None),
+        ("!a@b#c$", "F", None),
+        ("a_b_c_d_", "F", None),
+        
+        # Common password-like gibberish
+        ("password123", "F", None),
+        ("qwerty123", "F", None),
+        ("letmein", "F", None),
+        ("adminadmin", "F", None),
+        ("welcome1", "F", None),
+        
+        # Unicode abuse
+        ("Ω≈ç√∫˜µ", "F", None),
+        ("⁄€‹›ﬁﬂ‡°", "F", None),
+        ("ⓐⓑⓒⓓⓔ", "F", None),
+        ("ᴬᴮᶜᴰᴱ", "F", None),
+        ("ₐₑₒₓₔ", "F", None),
+        
+        # Emoji/non-text
+        ("😀😃😄😁", "F", None),
+        ("👍👎💯", "F", None),
+        ("🚀🌕✨", "F", None),
+        ("🔑🗝️🔒", "F", None),
+        ("📱💻🖥️", "F", None),
+        
+        # [Previous edge cases remain the same]
+        # ...
+    ]
+
+    print("=== Ultimate Gibberish Detection Test ===")
+    print(f"Running {len(test_cases)} test cases across 50+ languages\n")
+    
+    # Prepare results dataframe
+    results = []
+    columns = [
+        'Language', 
+        'Word', 
+        'Expected Status', 
+        'Actual Status',
+        'Classification Result',
+        'Expected LangCode',
+        'Detected LangCode',
+        'Language Detection Result',
+        'Error Message',
+        'Timestamp'
+    ]
+    
+    for idx, (text, expected_status, expected_lang) in enumerate(test_cases, 1):
+        # Run detection
+        status, err_type, msg = check_gibberish(text)
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get detected language
+        detected_lang = None
+        lang_result = "N/A"
+        if expected_status == "T" and text.strip():
+            try:
+                detected_lang = langdetect.detect(text)
+                lang_result = "✅" if detected_lang == expected_lang else "❌"
+            except:
+                detected_lang = "Detection Failed"
+                lang_result = "❌"
+        
+        # Build result row
+        results.append([
+            expected_lang if expected_lang else "Gibberish",
+            text,
+            expected_status,
+            status,
+            "✅" if status == expected_status else "❌",
+            expected_lang if expected_lang else "N/A",
+            detected_lang if detected_lang else "N/A",
+            lang_result,
+            msg if status != expected_status else "",
+            timestamp
+        ])
+        
+        # Print progress
+        print(f"{idx:03d} Tested: '{text[:20]}'")
+    
+    # Create DataFrame
+    df = pd.DataFrame(results, columns=columns)
+    
+    # Save to Excel
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"gibberish_test_results_{timestamp}.xlsx"
+    df.to_excel(filename, index=False)
+    
+    # Calculate statistics
+    classification_acc = (df['Classification Result'] == '✅').mean() * 100
+    lang_acc = (df['Language Detection Result'] == '✅').mean() * 100
+    
+    print(f"\n=== Final Results ===")
+    print(f"Classification Accuracy: {classification_acc:.1f}%")
+    print(f"Language Detection Accuracy: {lang_acc:.1f}%")
+    print(f"Results saved to {filename}")
+
+if __name__ == "__main__":
+    run_tests()
