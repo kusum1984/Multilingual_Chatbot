@@ -1385,3 +1385,142 @@ def run_tests():
 if __name__ == "__main__":
     load_dotenv()
     run_tests()
+**************************
+        *******************
+        **************
+        import os
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+from typing import Tuple
+import pandas as pd
+
+# Load environment variables
+load_dotenv()
+
+# Language-specific error messages with the exact required format
+ERROR_MESSAGES = {
+    'EN': "The given English word is nonsense.",
+    'FR': "Le mot français donné est un non-sens.",
+    'ES': "El texto en español no tiene sentido.",
+    'RU': "Данное русское слово бессмысленно.",
+    'AR': "الكلمة العربية المعطاة غير منطقية.",
+    'ZH': "中文文本是乱码。",
+    'JA': "日本語のテキストは無意味です。",
+    'KO': "주어진 한국어 단어는 무의미합니다.",
+    'HI': "दिए गए हिंदी शब्द एक बकवास शब्द है।",
+    # ... (keep all other language entries)
+    'DEFAULT': "The text appears to be gibberish."
+}
+
+# Language code to name mapping (existing from your code)
+LANGUAGE_NAMES = {
+    'en': 'English',
+    'fr': 'French',
+    # ... (keep all other language mappings)
+}
+
+def get_client():
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version="2023-07-01-preview"
+    )
+
+def format_error_response(word: str, lang_code: str) -> str:
+    """Formats the error response in the exact required format"""
+    error_msg = ERROR_MESSAGES.get(lang_code, ERROR_MESSAGES['DEFAULT'])
+    return f"word-{word} Langcode-{lang_code} expected error -{error_msg}"
+
+def process_gibberish_response(word: str, response_text: str) -> Tuple[str, str, str]:
+    """Process the API response and return formatted output"""
+    if response_text == "Valid":
+        return ("T", "", "")
+    
+    parts = response_text.split('|')
+    if len(parts) >= 3:
+        lang_code = parts[1].upper()
+        if lang_code in ERROR_MESSAGES:
+            return ("F", "gibberish_error", format_error_response(word, lang_code))
+    
+    return ("F", "gibberish_error", format_error_response(word, "XX"))
+
+def get_system_prompt():
+    return """You are a language detection system. Respond with:
+    - "Valid" for real words
+    - "Invalid|<reason>|<lang>" for gibberish
+    Where <lang> is a 2-letter language code from our supported languages."""
+
+def check_gibberish(text: str) -> Tuple[str, str, str]:
+    """Main function to check if text is gibberish"""
+    client = get_client()
+    
+    try:
+        if not text.strip():
+            return ("T", "", "")
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": get_system_prompt()},
+                {"role": "user", "content": f"Analyze: '{text}'"}
+            ],
+            temperature=0.0,
+            max_tokens=100
+        )
+        result = response.choices[0].message.content.strip()
+        return process_gibberish_response(text, result)
+            
+    except Exception:
+        return ("F", "api_error", format_error_response(text, "XX"))
+
+def run_tests():
+    """Run all test cases and save results to Excel"""
+    test_cases = [
+        # Valid Texts
+        ("Hello world", "T", "EN"),
+        ("Bonjour", "T", "FR"),
+        ("こんにちは", "T", "JA"),
+        
+        # Gibberish Cases
+        ("asdfghjkl", "F", None),
+        ("केाीी", "F", "HI"),
+        ("ضصثقضصثق", "F", "AR"),
+        ("漢字漢字", "F", "ZH"),
+        ("qwertyuiop", "F", None),
+        ("कखगघ", "F", "HI"),
+        # Add more test cases as needed
+    ]
+
+    print("Running gibberish detection tests...")
+    results = []
+    
+    for text, expected_status, expected_lang in test_cases:
+        status, err_type, msg = check_gibberish(text)
+        
+        # Extract detected language code
+        detected_lang = "XX"
+        if status == "F":
+            parts = msg.split()
+            if len(parts) > 1 and parts[1].startswith("Langcode-"):
+                detected_lang = parts[1].split("-")[1]
+        
+        results.append({
+            'Word': text,
+            'Expected Status': expected_status,
+            'Actual Status': status,
+            'Detected Lang Code': detected_lang,
+            'Language Name': get_language_name(detected_lang),
+            'Error Message': msg if status == "F" else ""
+        })
+    
+    # Create and save DataFrame
+    df = pd.DataFrame(results)
+    filename = "gibberish_test_results.xlsx"
+    df.to_excel(filename, index=False)
+    
+    print(f"\nAll test results saved to {filename}")
+    print("\nSample results:")
+    print(df.head())
+
+if __name__ == "__main__":
+    run_tests()
