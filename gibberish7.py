@@ -1524,3 +1524,143 @@ def run_tests():
 
 if __name__ == "__main__":
     run_tests()
+
+
+***********************************
+**************************
+***************************
+*******************
+
+import os
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+from typing import Tuple
+import pandas as pd
+
+# Load environment variables
+load_dotenv()
+
+# Language-specific error messages
+ERROR_MESSAGES = {
+    'EN': "The given English word is nonsense.",
+    'FR': "Le mot français donné est un non-sens.",
+    # ... (all other language messages)
+    'DEFAULT': "The text appears to be gibberish."
+}
+
+# Complete language code to name mapping
+LANGUAGE_NAMES = {
+    'EN': 'English',
+    'FR': 'French',
+    'ES': 'Spanish',
+    'RU': 'Russian',
+    'AR': 'Arabic',
+    'ZH': 'Chinese',
+    'JA': 'Japanese',
+    'KO': 'Korean',
+    'HI': 'Hindi',
+    # ... (all other languages)
+}
+
+def get_client():
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version="2023-07-01-preview"
+    )
+
+def detect_language(text: str) -> str:
+    """Detect language for any text (both valid and gibberish)"""
+    client = get_client()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Detect the language of this text. Respond with just the 2-letter language code."},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.0,
+            max_tokens=10
+        )
+        lang_code = response.choices[0].message.content.strip().upper()
+        return lang_code if lang_code in LANGUAGE_NAMES else "XX"
+    except Exception:
+        return "XX"
+
+def format_response(word: str, lang_code: str, is_valid: bool) -> str:
+    """Format response for both valid and invalid words"""
+    if is_valid:
+        return f"word-{word} Langcode-{lang_code} (Valid {LANGUAGE_NAMES.get(lang_code, 'Unknown')})"
+    else:
+        error_msg = ERROR_MESSAGES.get(lang_code, ERROR_MESSAGES['DEFAULT'])
+        return f"word-{word} Langcode-{lang_code} expected error -{error_msg}"
+
+def check_text(text: str) -> Tuple[str, str, str, str]:
+    """Check text and return status, lang_code, lang_name, and formatted message"""
+    if not text.strip():
+        return ("T", "XX", "Unknown", "")
+    
+    # First detect language
+    lang_code = detect_language(text)
+    lang_name = LANGUAGE_NAMES.get(lang_code, "Unknown")
+    
+    # Then check if gibberish
+    client = get_client()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Respond with 'Valid' or 'Invalid'"},
+                {"role": "user", "content": f"Is this text valid: '{text}'"}
+            ],
+            temperature=0.0,
+            max_tokens=10
+        )
+        result = response.choices[0].message.content.strip()
+        
+        if result == "Valid":
+            return ("T", lang_code, lang_name, format_response(text, lang_code, True))
+        else:
+            return ("F", lang_code, lang_name, format_response(text, lang_code, False))
+    except Exception:
+        return ("F", "XX", "Unknown", format_response(text, "XX", False))
+
+def run_tests():
+    test_cases = [
+        ("Hello", "T", "EN"),
+        ("Bonjour", "T", "FR"),
+        ("こんにちは", "T", "JA"),
+        ("asdfghjkl", "F", None),
+        ("केाीी", "F", "HI"),
+        ("مرحبا", "T", "AR"),
+        ("漢字", "T", "ZH"),
+        ("qwertyuiop", "F", None),
+        ("Привет", "T", "RU")
+    ]
+
+    print("Running language detection tests...")
+    results = []
+    
+    for text, expected_status, expected_lang in test_cases:
+        status, lang_code, lang_name, msg = check_text(text)
+        
+        results.append({
+            'Word': text,
+            'Expected Status': expected_status,
+            'Actual Status': status,
+            'Detected Lang Code': lang_code,
+            'Language Name': lang_name,
+            'Message': msg
+        })
+    
+    # Create and save DataFrame
+    df = pd.DataFrame(results)
+    filename = "language_test_results.xlsx"
+    df.to_excel(filename, index=False)
+    
+    print(f"\nAll test results saved to {filename}")
+    print("\nSample results:")
+    print(df.head())
+
+if __name__ == "__main__":
+    run_tests()
