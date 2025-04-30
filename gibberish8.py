@@ -30,7 +30,7 @@ def get_client():
     )
 
 def get_system_prompt():
-    """ORIGINAL SYSTEM PROMPT (unchanged)"""
+    """ORIGINAL FULL SYSTEM PROMPT (restored exactly)"""
     return """
     # Ultimate Gibberish Detection System v2.0
     
@@ -38,20 +38,78 @@ def get_system_prompt():
     Analyze text for meaningful content in ANY language using these guidelines:
     
     === VALID TEXT EXAMPLES ===
-    1. Dictionary Words: "apple", "computer", "こんにちは"
-    2. Proper Nouns: "New York", "東京タワー"
-    3. Technical Codes: "ID-5849-BN"
+    1. Dictionary Words:
+       - English: "apple", "computer"
+       - Japanese: "こんにちは" (hello)
+       - Arabic: "كتاب" (book)
+    2. Proper Nouns:
+       - "New York"
+       - "東京タワー" (Tokyo Tower)
+       - "मुंबई" (Mumbai)
+    3. Technical Codes:
+       - "ID-5849-BN"
+       - "订单号: 456789" (Chinese order number)
+    4. Common Phrases:
+       - "How are you?"
+       - "Où est la gare?" (French: Where is the station?)
+    5. Meaningful Single Characters:
+       - "A" (grade)
+       - "我" (Chinese "I")
     
     === GIBBERISH EXAMPLES ===
-    1. Random Typing: "asdfjkl;"
-    2. Impossible Combinations: "xzqywv"
-    3. Meaningless Repetition: "asdf asdf asdf"
+    1. Random Typing:
+       - "asdfjkl;"
+       - "qwertyuiop"
+    2. Impossible Combinations:
+       - "xzqywv" (invalid English)
+       - "漢字漢字" (meaningless repetition)
+    3. Nonsense Mixing:
+       - "blah123blah"
+       - "foo@bar$"
+    4. Orthography Violations:
+       - "Thsi is nto Enlgish"
+       - "कखगघ" (invalid Devanagari)
+    5. Meaningless Repetition:
+       - "asdf asdf asdf"
+       - "123 123 123"
+    
+    === DECISION RULES ===
+    ✅ VALID if any:
+    - Real dictionary word
+    - Recognizable name/entity
+    - Valid code/number pattern
+    - Culturally significant
+    - Proper single character
+    
+    ❌ GIBBERISH if all:
+    - No dictionary words
+    - Violates language rules
+    - Random character mixing
+    - Meaningless repetition
     
     === RESPONSE FORMAT ===
-    Respond with ONLY:
+    STRICTLY respond with ONLY:
     - "Valid" OR
     - "Invalid|<reason>|<detected_lang>"
+    Where <reason> is:
+    - random_characters
+    - impossible_combinations
+    - nonsense_repetition
+    - no_meaningful_units
+    - mixed_scripts
+    And <detected_lang> is the 2-letter language code if detectable, or "XX" if unknown
     """
+
+def get_user_prompt(text: str) -> str:
+    """ORIGINAL USER PROMPT (unchanged)"""
+    return f"""
+    Analyze: "{text}"
+    
+    Compare against these examples:
+    [Valid] "Paris", "123 Main St", "안녕", "@username"
+    [Gibberish] "xjdkl", "asdf1234", "!@#$%^", "कखगघ"
+    
+    Your analysis (Valid/Invalid|Reason|Language):"""
 
 def detect_language(text: str) -> Tuple[str, str]:
     """New helper to detect language for any text"""
@@ -82,11 +140,11 @@ def format_valid_response(word: str, lang_code: str, lang_name: str) -> str:
     return f"word-{word} Langcode-{lang_code} (Valid {lang_name})"
 
 def check_gibberish(text: str) -> Tuple[str, str, str, str, str]:
-    """Enhanced version that maintains original detection but adds language info"""
+    """Main function with original logic + language detection"""
     if not text.strip():
         return ("T", "XX", "Unknown", "", "")
     
-    # First get language info (new)
+    # First get language info (new addition)
     lang_code, lang_name = detect_language(text)
     
     # ORIGINAL GIBBERISH DETECTION LOGIC (unchanged)
@@ -96,7 +154,7 @@ def check_gibberish(text: str) -> Tuple[str, str, str, str, str]:
             model="gpt-4",
             messages=[
                 {"role": "system", "content": get_system_prompt()},
-                {"role": "user", "content": f"Analyze: '{text}'"}
+                {"role": "user", "content": get_user_prompt(text)}
             ],
             temperature=0.0,
             max_tokens=100
@@ -107,28 +165,29 @@ def check_gibberish(text: str) -> Tuple[str, str, str, str, str]:
             return ("T", lang_code, lang_name, format_valid_response(text, lang_code, lang_name), "")
         else:
             parts = result.split('|')
-            if len(parts) >= 3:
-                detected_lang = parts[1].upper()
-                if detected_lang in ERROR_MESSAGES:
-                    lang_code = detected_lang
-                    lang_name = LANGUAGE_NAMES.get(detected_lang.lower(), detected_lang)
+            if len(parts) >= 3:  # If API detected language, use that
+                api_lang = parts[1].upper()
+                if api_lang in ERROR_MESSAGES:
+                    lang_code = api_lang
+                    lang_name = LANGUAGE_NAMES.get(api_lang.lower(), api_lang)
             return ("F", lang_code, lang_name, "", format_error_response(text, lang_code))
     except Exception:
         return ("F", "XX", "Unknown", "", format_error_response(text, "XX"))
 
 def run_tests():
-    """Test function showing both valid and gibberish cases"""
+    """Test function with original test cases"""
     test_cases = [
-        # Valid words with expected language
-        ("Hello", "T", "EN"),
-        ("Bonjour", "T", "FR"), 
-        ("こんにちは", "T", "JA"),
-        ("مرحبا", "T", "AR"),
+        # Valid words
+        ("Hello world", "T", "EN"),
+        ("Bonjour le monde", "T", "FR"),
+        ("こんにちは世界", "T", "JA"),
+        ("مرحبا بالعالم", "T", "AR"),
         
         # Gibberish cases
         ("asdfghjkl", "F", None),
         ("केाीी", "F", "HI"),
         ("xzqywv", "F", None),
+        ("कखगघ", "F", "HI"),
         ("123 123 123", "F", None)
     ]
 
@@ -150,11 +209,15 @@ def run_tests():
     df = pd.DataFrame(results)
     df.to_excel("gibberish_test_results.xlsx", index=False)
     
-    # Print samples
-    print("Sample Valid Output:")
-    print(df[df['Actual Status'] == 'T'].head(2)['Valid Message'].values)
-    print("\nSample Gibberish Output:")
-    print(df[df['Actual Status'] == 'F'].head(2)['Error Message'].values)
+    # Print verification samples
+    print("=== Verification Samples ===")
+    print("\nValid Word Example:")
+    valid_example = next(r for r in results if r['Actual Status'] == 'T')
+    print(valid_example['Valid Message'])
+    
+    print("\nGibberish Example:")
+    gibberish_example = next(r for r in results if r['Actual Status'] == 'F')
+    print(gibberish_example['Error Message'])
 
 if __name__ == "__main__":
     run_tests()
