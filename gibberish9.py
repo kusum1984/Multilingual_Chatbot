@@ -226,3 +226,150 @@ if __name__ == "__main__":
         if error_msg:
             print(f"Message: {error_msg}")
         print("-" * 60)
+*****************************
+*************************
+from langchain.chat_models import AzureChatOpenAI
+import configparser
+from typing import Tuple
+
+class GibberishDetector:
+    def __init__(self):
+        """
+        Initialize the gibberish detector with direct Azure OpenAI values
+        """
+        # Initialize AzureChatOpenAI client with direct values
+        self.llm = AzureChatOpenAI(
+            openai_api_key="your-azure-openai-api-key",  # Replace with your actual API key
+            azure_endpoint="https://your-resource-name.openai.azure.com/",  # Replace with your endpoint
+            api_version="2023-05-15",
+            deployment_name="your-deployment-name",  # Replace with your deployment name
+            temperature=0.2,
+            max_tokens=200
+        )
+        
+        # Language-specific error messages (unchanged)
+        self.error_messages = {
+            'HI': "दिए गए हिंदी शब्द एक बकवास शब्द है।",
+            'ES': "El texto en español proporcionado no tiene sentido.",
+            'PT': "O texto em português fornecido é sem sentido.",
+            'ZH': "提供的中文文本是无意义的。",
+            'JA': "提供された日本語のテキストは無意味です。",
+            'DE': "Der bereitgestellte deutsche Text ist sinnlos.",
+            'FR': "Le texte français fourni est un non-sens.",
+            'EN': "The provided text is gibberish.",
+            'IT': "Il testo italiano fornito non ha senso.",
+            'RU': "Предоставленный русский текст бессмыслен.",
+            'AR': "النص العربي المقدم غير منطقي.",
+            'KO': "제공된 한국어 텍스트는 무의미합니다.",
+            'NL': "De verstrekte Nederlandse tekst is onzin."
+        }
+
+    def get_system_prompt(self) -> str:
+        """
+        Returns the comprehensive system prompt with examples
+        """
+        return """
+        You are an advanced multilingual text analysis model trained to detect gibberish across 50+ languages.
+        
+        DEFINITION:
+        Gibberish is text that:
+        - Lacks coherent meaning in the specified language context
+        - Contains random character sequences not forming valid words
+        - Shows no grammatical structure
+        - Includes excessive repeated characters/patterns
+        
+        EXAMPLES OF GIBBERISH:
+        1. English: "asdf jklö pqzm"
+        2. Hindi: "केाीी िजक ल"
+        3. Spanish: "asdfg ñlkjh"
+        4. Japanese: "あいうえおかきくけこさしすせそ"
+        5. Russian: "ывапролдж фыва"
+        
+        EXAMPLES OF VALID TEXT:
+        1. English: "The quick brown fox"
+        2. Hindi: "एक तेज भूरी लोमड़ी"
+        3. Spanish: "El rápido zorro marrón"
+        4. Japanese: "速い茶色の狐"
+        5. Russian: "Быстрая коричневая лиса"
+        
+        INSTRUCTIONS:
+        1. First determine the language context from the lang_code
+        2. Check if text contains valid words/structures in that language
+        3. For mixed-language text, consider any valid language as non-gibberish
+        4. For valid text, respond with exactly: "Valid"
+        5. For gibberish, respond with exactly: "Invalid"
+        
+        SPECIAL CASES:
+        - Proper nouns/names should be considered valid
+        - Technical terms/acronyms are valid
+        - Numbers/dates are valid
+        - Single words are valid if they exist in any language
+        """
+
+    def get_user_prompt(self, text: str, lang_code: str) -> str:
+        """
+        Returns the user prompt for analysis
+        """
+        return f"""
+        Analyze this text for gibberish (language code: {lang_code}):
+        {text}
+        
+        Respond with either:
+        1. "Valid" if the text contains recognizable words/nouns in the specified language
+        2. "Invalid" if the text is meaningless in the specified language
+        """
+
+    def check_gibberish(self, text: str, lang_code: str = 'EN') -> Tuple[str, str, str]:
+        """
+        Checks if text is gibberish in the specified language
+        
+        Returns:
+            Tuple: (result_flag, error_type, error_message)
+            - result_flag: 'T' for valid, 'F' for invalid
+            - error_type: '' if valid, 'gibberish_error' if invalid
+            - error_message: '' if valid, language-specific message if invalid
+        """
+        try:
+            # Prepare messages in chat format
+            messages = [
+                {"role": "system", "content": self.get_system_prompt()},
+                {"role": "user", "content": self.get_user_prompt(text, lang_code)}
+            ]
+            
+            # Call the Azure LLM
+            response = self.llm(messages)
+            result = response.content.strip()
+            
+            if result == "Valid":
+                return 'T', '', ''
+            else:
+                error_msg = self.error_messages.get(lang_code, self.error_messages['EN'])
+                return 'F', 'gibberish_error', error_msg
+                
+        except Exception as e:
+            return 'F', 'api_error', str(e)
+
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize detector
+    detector = GibberishDetector()
+    
+    # Test cases
+    test_cases = [
+        ("केाीी", "HI"),  # Hindi gibberish
+        ("नमस्ते दुनिया", "HI"),  # Hindi valid
+        ("asdfg hjklñ", "ES"),  # Spanish gibberish
+        ("Hola mundo", "ES"),  # Spanish valid
+        ("あいうえおかきくけこ", "JA"),  # Japanese gibberish
+        ("こんにちは世界", "JA"),  # Japanese valid
+        ("Xysd fgtw qwert", "EN"),  # English gibberish
+        ("The quick brown fox", "EN")  # English valid
+    ]
+    
+    for text, lang in test_cases:
+        result, error_type, error_msg = detector.check_gibberish(text, lang)
+        print(f"Language: {lang}")
+        print(f"Text: {text}")
+        print(f"Result: {result} | Error Type: {error_type} | Message: {error_msg}")
+        print("-" * 60)
