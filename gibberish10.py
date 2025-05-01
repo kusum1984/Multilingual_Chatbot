@@ -323,108 +323,97 @@ if __name__ == "__main__":
         detect_gibberish(word)
 
 **********************
-import os
-from openai import AzureOpenAI
+import re
 
 # Configuration
 cfg = {
-    'AzureOpenAI': {
-        'GibberishValidation': {
-            'api_key': os.getenv('AZURE_OPENAI_API_KEY'),
-            'azure_endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'),
-            'deployment_name': os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-            'api_version': '2023-07-01-preview',
-            'Model': os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')
-        }
+    "GIBBERISH_VALIDATION": {
+        "system_prompt": """You are an advanced text analysis model trained to determine if a given text contains gibberish.
+Gibberish is defined as text that lacks coherent meaning, logical structure, or context, often consisting of a random sequence of letters, numbers, or symbols.
+Your task is to analyze the text and decide if it is mostly gibberish or mostly coherent.
+IF the text is coherent, contains any nouns or meaningful content in any language, or is composed entirely of numbers, you must respond with only the word "Valid" and nothing else.
+If the text is mostly gibberish and lacks coherent content or nouns, provide a brief reason in the local language explaining why it is considered gibberish.""",
+        "user_prompt": """Analyze the following text and determine if it contains gibberish.
+If the text contains any recognizable words, nouns, or coherent structure in any language, or is composed entirely of numbers, respond with only the word "Valid" and nothing else.
+If the text is truly gibberish and lacks any coherent content, provide a brief reason in the native language explaining why:
+
+{text}
+
+Respond with only 'Valid' or the reason, without any additional explanation."""
     },
-    'GIBBERISH_VALIDATION': {
-        'system_prompt': (
-            "You are an advanced text analysis model trained to determine if a given text contains gibberish. "
-            "Gibberish is defined as text that lacks coherent meaning, logical structure, or context, often consisting of "
-            "random sequences of letters, numbers, or symbols. Your task is to analyze the text and decide if it is mostly "
-            "gibberish or mostly coherent. If the text is coherent, contains any nouns, is meaningful in any language, or is composed entirely of numbers, "
-            "respond with only the word 'Valid'. If the text is mostly gibberish and lacks coherent content or nouns, provide a brief reason explaining why it is gibberish."
-        ),
-        'user_prompt': (
-            "Analyze the following text and determine if it contains gibberish. "
-            "If the text contains recognizable words, nouns, or coherent structure in any language, or is composed entirely of numbers, respond with only the word 'Valid'. "
-            "If the text is truly gibberish and lacks any coherent content, provide a brief reason explaining why:\n\n{text}\n\nRespond with only 'Valid' or the reason, without any additional explanation."
-        )
+    "AzureOpenAI": {
+        "GibberishValidation": {
+            "Model": "gpt-35-turbo",
+            "api_key": "your-azure-openai-api-key",
+            "azure_endpoint": "https://your-resource.openai.azure.com/",
+            "deployment_name": "your-deployment-name"
+        }
     }
 }
 
-# Language error message dictionary
-LANGUAGE_ERROR_MAP = {
-    "hi": "दिए गए हिंदी शब्द एक बकवास शब्द है।",
-    "es": "La palabra dada en español es un galimatías.",
-    "pt": "A palavra dada em português é un palavreado sem sentido.",
-    "zh-cn": "给出的中文是胡言乱语。",
-    "ja": "与えられた日本語は意味不明な文字列です。",
-    "de": "Das gegebene deutsche Wort ist Kauderwelsch.",
-    "fr": "Le mot français donné est un charabia."
+from openai import AzureOpenAI
+
+# Setup client
+client = AzureOpenAI(
+    api_key=cfg["AzureOpenAI"]["GibberishValidation"]["api_key"],
+    azure_endpoint=cfg["AzureOpenAI"]["GibberishValidation"]["azure_endpoint"],
+    api_version="2023-12-01-preview"
+)
+
+# Error message mapping
+language_errors = {
+    "HI": "दिए गए हिंदी शब्द एक बकवास शब्द है।",
+    "ES": "La palabra dada en español es un galimatías.",
+    "PT": "A palavra dada em português é um palavreado sem sentido.",
+    "ZH": "给出的中文是胡言乱语。",
+    "JA": "与えられた日本語は意味不明な文字列です。",
+    "DE": "Das gegebene deutsche Wort ist Kauderwelsch.",
+    "FR": "Le mot français donné est un charabia."
 }
 
-# Reverse error to langcode mapping
-ERROR_TO_LANG = {v: k for k, v in LANGUAGE_ERROR_MAP.items()}
+def get_langcode_from_error(error_message):
+    for code, message in language_errors.items():
+        if message.strip() == error_message.strip():
+            return code
+    return "UNKNOWN"
 
-# Azure OpenAI client
-def get_client():
-    return AzureOpenAI(
-        api_key=cfg['AzureOpenAI']['GibberishValidation']['api_key'],
-        api_version=cfg['AzureOpenAI']['GibberishValidation']['api_version'],
-        azure_endpoint=cfg['AzureOpenAI']['GibberishValidation']['azure_endpoint']
-    )
-
-# Function to check for gibberish
+# Gibberish detector
 def check_gibberish(text):
-    system_prompt = cfg['GIBBERISH_VALIDATION']['system_prompt']
-    user_prompt = cfg['GIBBERISH_VALIDATION']['user_prompt'].format(text=text)
+    system_prompt = cfg["GIBBERISH_VALIDATION"]["system_prompt"]
+    user_prompt = cfg["GIBBERISH_VALIDATION"]["user_prompt"].format(text=text)
 
-    client = get_client()
-    response = client.chat.completions.create(
-        model=cfg['AzureOpenAI']['GibberishValidation']['Model'],
-        messages=[
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': user_prompt}
-        ],
-        temperature=0.2,
-        top_p=1.0
-    )
-    result = response.choices[0].message.content.strip()
-    return result
+    try:
+        response = client.chat.completions.create(
+            model=cfg["AzureOpenAI"]["GibberishValidation"]["Model"],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            top_p=1.0,
+            n=1
+        )
+        result = response.choices[0].message.content.strip()
 
-# Function to determine lang code based on error message
-def get_langcode_from_error(error_msg):
-    for err, lang_code in ERROR_TO_LANG.items():
-        if err in error_msg:
-            return lang_code, err
-    return "unknown", error_msg
+        if result.lower() == "valid":
+            print(f"Input: {text}\nIs Gibberish: False\n")
+        else:
+            lang_code = get_langcode_from_error(result)
+            print(f"Input: {text}\nIs Gibberish: True\nLangCode: {lang_code}\nError: {result}\n")
+    except Exception as e:
+        print(f"Error during validation: {e}")
 
-# Main wrapper
-def detect_gibberish(text):
-    result = check_gibberish(text)
+# 🧪 Test Cases
+test_inputs = [
+    "केाीी",        # Hindi Gibberish
+    "asdufhwq",     # English-like Gibberish
+    "ñplsdja",      # Spanish-like Gibberish
+    "ああああああ",   # Japanese Gibberish
+    "12345",        # Valid numeric
+    "Hallo",        # Valid German
+    "kjashdfkjasd", # Random string
+    "给出的中文是胡言乱语。",  # Chinese
+]
 
-    if result.lower() == "valid":
-        print(f"Gibberish Word: {text}")
-        print("Lang Code: ")
-        print("Error: ")
-    else:
-        lang_code, error_msg = get_langcode_from_error(result)
-        print(f"Gibberish Word: {text}")
-        print(f"Lang Code: {lang_code}")
-        print(f"Error: {error_msg}")
-
-# ----------------- TEST -----------------
-if __name__ == "__main__":
-    test_words = [
-        "केाीी",        # Hindi gibberish
-        "aaaa",         # Portuguese or Spanish gibberish
-        "これはでこちゅ",  # Japanese gibberish
-        "!!@@##",       # Symbol gibberish
-        "bonjour",      # Valid French
-        "12345",        # Valid number
-    ]
-
-    for word in test_words:
-        print("\n--------------------------")
-        detect_gibberish(word)
+for input_text in test_inputs:
+    check_gibberish(input_text)
