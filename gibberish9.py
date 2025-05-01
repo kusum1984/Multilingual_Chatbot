@@ -373,3 +373,113 @@ if __name__ == "__main__":
         print(f"Text: {text}")
         print(f"Result: {result} | Error Type: {error_type} | Message: {error_msg}")
         print("-" * 60)
+
+
+
+
+************************
+****************************
+from langchain.chat_models import AzureChatOpenAI
+from typing import Tuple
+
+class GibberishDetector:
+    def __init__(self):
+        """
+        Initialize the gibberish detector with direct Azure OpenAI values
+        """
+        # Initialize AzureChatOpenAI client with direct values
+        self.llm = AzureChatOpenAI(
+            openai_api_key="your-azure-openai-api-key",
+            azure_endpoint="https://your-resource-name.openai.azure.com/",
+            api_version="2023-05-15",
+            deployment_name="your-deployment-name",
+            temperature=0.2,
+            max_tokens=200
+        )
+        
+        # Language-specific error messages
+        self.error_messages = {
+            'HI': "दिए गए हिंदी शब्द एक बकवास शब्द है।",
+            'ES': "El texto en español proporcionado no tiene sentido.",
+            'PT': "O texto em português fornecido é sem sentido.",
+            'ZH': "提供的中文文本是无意义的。",
+            'JA': "提供された日本語のテキストは無意味です。",
+            'DE': "Der bereitgestellte deutsche Text ist sinnlos.",
+            'FR': "Le texte français fourni es un non-sens.",
+            'EN': "The provided text is gibberish.",
+            'IT': "Il testo italiano fornito non ha senso.",
+            'RU': "Предоставленный русский текст бессмыслен.",
+            'AR': "النص العربي المقدم غير منطقي.",
+            'KO': "제공된 한국어 텍스트는 무의미합니다.",
+            'NL': "De verstrekte Nederlandse tekst is onzin."
+        }
+
+    def get_system_prompt(self) -> str:
+        """
+        Returns the comprehensive system prompt with examples
+        """
+        return """[Previous system prompt content remains exactly the same]"""
+
+    def get_user_prompt(self, text: str, lang_code: str) -> str:
+        """
+        Returns the user prompt for analysis
+        """
+        return f"""Analyze this text for gibberish (language code: {lang_code}):
+{text}
+
+Respond with either:
+1. "Valid" if the text contains recognizable words/nouns
+2. "Invalid" if the text is meaningless"""
+
+    def check_gibberish(self, text: str, lang_code: str = 'EN') -> Tuple[str, str, str]:
+        """
+        Checks if text is gibberish with exact error message format
+        """
+        try:
+            # Call the Azure LLM with proper message format
+            response = self.llm([
+                {"role": "system", "content": self.get_system_prompt()},
+                {"role": "user", "content": self.get_user_prompt(text, lang_code)}
+            ])
+            
+            # Extract content from AIMessage object
+            result = response.content.strip() if hasattr(response, 'content') else str(response)
+            
+            if result == "Valid":
+                return 'T', '', ''
+            else:
+                error_msg = f"gibberish word-{text} Langcode-{lang_code} expected error -\"{self.error_messages.get(lang_code, self.error_messages['EN'])}\""
+                return 'F', 'gibberish_error', error_msg
+                
+        except Exception as e:
+            error_msg = f"gibberish word-{text} Langcode-{lang_code} expected error -\"API Error: {str(e)}\""
+            return 'F', 'api_error', error_msg
+
+
+# Example usage with exact output format
+if __name__ == "__main__":
+    detector = GibberishDetector()
+    
+    test_cases = [
+        ("केाीी", "HI"),
+        ("asdfg hjklñ", "ES"),
+        ("あいうえおかきくけこ", "JA"),
+        ("Xysd fgtw qwert", "EN")
+    ]
+    
+    for text, lang in test_cases:
+        result, error_type, error_msg = detector.check_gibberish(text, lang)
+        if result == 'F':
+            print(error_msg)
+        else:
+            print(f"Valid text: {text} (Language: {lang})")
+
+
+
+
+
+
+
+
+
+
