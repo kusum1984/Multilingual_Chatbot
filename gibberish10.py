@@ -417,3 +417,91 @@ test_inputs = [
 
 for input_text in test_inputs:
     check_gibberish(input_text)
+
+*****************
+*******************
+*****************
+
+import os
+import re
+import openai
+import pandas as pd
+
+# Replace these with your actual Azure OpenAI credentials
+openai.api_key = "YOUR_API_KEY"
+openai.api_type = "azure"
+openai.api_base = "https://YOUR_ENDPOINT.openai.azure.com/"
+openai.api_version = "2023-07-01"
+
+model_name = "YOUR_DEPLOYED_MODEL_NAME"  # Example: "gpt-35-turbo"
+
+# Step 1: Define error message DataFrame
+lang_error_df = pd.DataFrame([
+    {"lang_code": "HI", "error_phrase": "हिंदी शब्द एक बकवास"},
+    {"lang_code": "ES", "error_phrase": "español es un galimatías"},
+    {"lang_code": "PT", "error_phrase": "português é un palavreado"},
+    {"lang_code": "ZH", "error_phrase": "中文是胡言乱语"},
+    {"lang_code": "JA", "error_phrase": "日本語は意味不明"},
+    {"lang_code": "DE", "error_phrase": "deutsche Wort ist Kauderwelsch"},
+    {"lang_code": "FR", "error_phrase": "français donné est un charabia"}
+])
+
+# Step 2: Prompt templates
+system_prompt = (
+    "You are an advanced text analysis model trained to determine if a given text contains gibberish. "
+    "Gibberish is defined as text that lacks coherent meaning, logical structure, or context, often consisting "
+    "of random sequences of letters, numbers, or symbols. Your task is to analyze the text and decide if it is mostly "
+    "gibberish or mostly coherent. If it is coherent or composed entirely of numbers or meaningful words in any language, "
+    "respond only with the word 'Valid'. If it's gibberish, provide a short sentence explaining why."
+)
+
+user_prompt_template = (
+    "Analyze the following text and determine if it contains gibberish. "
+    "If the text contains recognizable words or structure in any language, or is made up entirely of numbers, "
+    "respond only with 'Valid'. If the text is truly gibberish and lacks coherence, provide a short reason why:\n\n{text}\n\n"
+    "Respond with only 'Valid' or the reason, and nothing else."
+)
+
+# Step 3: Function to call LLM
+def check_gibberish(text):
+    user_prompt = user_prompt_template.format(text=text)
+
+    response = openai.ChatCompletion.create(
+        engine=model_name,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.2,
+        top_p=1.0
+    )
+
+    result = response['choices'][0]['message']['content'].strip()
+
+    if result.lower() == "valid":
+        return False, None, None  # Not gibberish
+    else:
+        # Try to infer language code from known error phrases
+        for _, row in lang_error_df.iterrows():
+            if row["error_phrase"] in result:
+                return True, row["lang_code"], result
+        return True, "Unknown", result  # Gibberish but lang unknown
+
+# Step 4: Test the function
+test_words = [
+    "केाीी",     # Hindi gibberish
+    "aaaaa",     # Portuguese gibberish
+    "asdkjha",   # German gibberish
+    "汉字测试",  # Chinese (valid or gibberish depending)
+    "これは何",   # Japanese (valid or gibberish)
+    "abcdefgh",  # Could be English junk
+    "bonjour",   # Valid French word
+]
+
+for word in test_words:
+    is_gib, lang, err = check_gibberish(word)
+    if is_gib:
+        print(f"Gibberish Word: {word} | LangCode: {lang} | Error: {err}")
+    else:
+        print(f"'{word}' is valid.")
+
