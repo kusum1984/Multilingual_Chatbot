@@ -856,4 +856,101 @@ if __name__ == "__main__":
         print(f"Status: {status}, Code: {code}, Message: {message}")
         print("-" * 60)
 
+**************
+************
+************
+*************
+import os
+from langchain.chat_models import AzureChatOpenAI
+from langchain.schema import HumanMessage, SystemMessage
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Initialize the AzureOpenAI LLM
+llm = AzureChatOpenAI(
+    openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_API_BASE"),
+    deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+    model_name="gpt-4",  # or gpt-35-turbo if you're using that
+    temperature=0.2,
+)
+
+# System prompt with multilingual gibberish handling
+system_prompt = """
+You are an advanced text analysis model trained to determine if a given text contains gibberish.
+Gibberish is defined as text that lacks coherent meaning, logical structure, or context, often consisting of random sequences of letters, numbers, or symbols.
+
+Your task:
+- If the text is coherent, contains any recognizable nouns or meaningful structure in any language, or is composed entirely of numbers, respond ONLY with: "Valid"
+- If the text is gibberish, respond with the appropriate language-specific error message from below if you can detect the language.
+
+Language-specific gibberish messages:
+- Hindi (HI): "दिए गए हिंदी शब्द एक बकवास शब्द है।"
+- Spanish (ES): "La palabra dada en español es un galimatías."
+- Portuguese (PT): "A palavra dada em português é um palavreado sem sentido."
+- Chinese (ZH): "给出的中文是胡言乱语。"
+- Japanese (JA): "与えられた日本語は意味不明な文字列です。"
+- German (DE): "Das gegebene deutsche Wort ist Kauderwelsch."
+- French (FR): "Le mot français donné est un charabia."
+
+If the language does not match any of the above, reply with: "The given text is gibberish in an unsupported language."
+
+Only return "Valid" or the appropriate message. Do not include additional comments or explanation.
+"""
+
+# User prompt template
+user_prompt_template = """
+Analyze the following text and determine if it contains gibberish.
+
+Text to analyze:
+{text}
+
+Respond with either 'Valid' or the correct language-specific error message only.
+"""
+
+# Gibberish detection function
+def check_gibberish(text: str):
+    user_prompt = user_prompt_template.format(text=text)
+
+    try:
+        response = llm([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+
+        result = response.content.strip()
+
+        if result == "Valid":
+            return 'T', '', ''
+        else:
+            return 'F', 'gibberish_error', result
+
+    except Exception as e:
+        return 'F', 'api_error', str(e)
+
+# Test cases
+if __name__ == "__main__":
+    test_inputs = [
+        "केाीी",                    # Hindi - Gibberish
+        "asdkjasd",                 # Spanish - Gibberish
+        "ß∂ƒ©",                     # German - Gibberish
+        "Bonjour",                  # French - Valid
+        "Olá mundo",                # Portuguese - Valid
+        "こんにちは",                 # Japanese - Valid
+        "你好",                     # Chinese - Valid
+        "123456",                  # Numeric - Valid
+        "éwqihqiw",                # French - Gibberish
+        "Hello, how are you?",     # English - Valid
+        "slkfjsdlkj",              # Unknown - Gibberish
+        "😀👍🎉",                    # Emojis - Gibberish
+    ]
+
+    for text in test_inputs:
+        status, code, message = check_gibberish(text)
+        print(f"Input: {text}")
+        print(f"Status: {status}, Code: {code}, Message: {message}")
+        print("-" * 60)
 
