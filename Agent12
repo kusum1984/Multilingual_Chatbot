@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Dict, List, Optional
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import StateGraph, START, END
@@ -209,19 +209,19 @@ sql_agent_executor = create_sql_agent(
 # ================== State Definition ==================
 class AgentState(dict):
     @property
-    def messages(self):
+    def messages(self) -> List[HumanMessage | AIMessage]:
         return self.get("messages", [])
     
     @property
-    def next_node(self):
+    def next_node(self) -> str:
         return self.get("next_node", "END")
 
 # ================== Multi-Agent Supervisor ==================
-def supervisor(state: AgentState) -> dict:
+def supervisor(state: AgentState) -> Dict:
     """Routes to appropriate agent based on user input"""
     try:
         if not state.messages:
-            return {"next_node": "END"}
+            return {"messages": [], "next_node": "END"}
         
         user_input = state.messages[-1].content
         
@@ -234,14 +234,14 @@ def supervisor(state: AgentState) -> dict:
             return {"next_node": "END"}
     except Exception as e:
         print(f"Supervisor error: {str(e)}")
-        return {"next_node": "END", "messages": [AIMessage(content=f"Error: {str(e)}")]}
+        return {"messages": [AIMessage(content=f"Error: {str(e)}")], "next_node": "END"}
 
 # ================== Agent Nodes ==================
-def elastic_agent(state: AgentState) -> dict:
+def elastic_agent(state: AgentState) -> Dict:
     """Elasticsearch agent node"""
     try:
         if not state.messages:
-            return {"messages": []}
+            return {"messages": [], "next_node": "supervisor"}
         
         user_input = state.messages[-1].content
         result = elastic_agent_executor.invoke({"input": user_input})
@@ -255,11 +255,11 @@ def elastic_agent(state: AgentState) -> dict:
             "next_node": "supervisor"
         }
 
-def sql_agent(state: AgentState) -> dict:
+def sql_agent(state: AgentState) -> Dict:
     """SQL agent node"""
     try:
         if not state.messages:
-            return {"messages": []}
+            return {"messages": [], "next_node": "supervisor"}
         
         user_input = state.messages[-1].content
         result = sql_agent_executor.run(user_input)
@@ -299,6 +299,9 @@ builder.add_conditional_edges(
         "END": END
     }
 )
+
+# Set the entry point
+builder.set_entry_point("supervisor")
 
 multi_agent = builder.compile()
 
