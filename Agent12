@@ -207,25 +207,25 @@ sql_agent_executor = create_sql_agent(
 )
 
 # ================== Multi-Agent Supervisor ==================
-def supervisor(state: dict) -> str:
+def supervisor(state: dict) -> dict:
     """Routes to appropriate agent based on user input"""
     try:
         messages = state.get("messages", [])
         if not messages:
-            return "END"
+            return {"next_node": "END"}
         
         user_input = messages[-1].content
         
         # Simple routing logic - in production you'd use the LLM for this
         if any(keyword in user_input.lower() for keyword in ["elastic", "index", "search"]):
-            return "elastic_agent"
+            return {"next_node": "elastic_agent"}
         elif any(keyword in user_input.lower() for keyword in ["sql", "database", "query"]):
-            return "sql_agent"
+            return {"next_node": "sql_agent"}
         else:
-            return "END"
+            return {"next_node": "END"}
     except Exception as e:
         print(f"Supervisor error: {str(e)}")
-        return "END"
+        return {"next_node": "END"}
 
 # ================== Agent Nodes ==================
 def elastic_agent(state: dict):
@@ -273,7 +273,7 @@ builder.add_edge("supervisor", END)
 # Conditional edges
 builder.add_conditional_edges(
     "supervisor",
-    lambda state: state["supervisor"],
+    lambda state: state.get("next_node", "END"),
     {
         "elastic_agent": "elastic_agent",
         "sql_agent": "sql_agent",
