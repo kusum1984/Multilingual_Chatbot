@@ -1,8 +1,7 @@
-from typing import Literal, Annotated
+from typing import Annotated
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode, ToolExecutor
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from elasticsearch import Elasticsearch
@@ -208,12 +207,12 @@ sql_agent_executor = create_sql_agent(
 )
 
 # ================== Multi-Agent Supervisor ==================
-def supervisor(state: dict) -> Literal["elastic_agent", "sql_agent", END]:
+def supervisor(state: dict) -> str:
     """Routes to appropriate agent based on user input"""
     try:
         messages = state.get("messages", [])
         if not messages:
-            return END
+            return "END"
         
         user_input = messages[-1].content
         
@@ -223,10 +222,10 @@ def supervisor(state: dict) -> Literal["elastic_agent", "sql_agent", END]:
         elif any(keyword in user_input.lower() for keyword in ["sql", "database", "query"]):
             return "sql_agent"
         else:
-            return END
+            return "END"
     except Exception as e:
         print(f"Supervisor error: {str(e)}")
-        return END
+        return "END"
 
 # ================== Agent Nodes ==================
 def elastic_agent(state: dict):
@@ -278,7 +277,7 @@ builder.add_conditional_edges(
     {
         "elastic_agent": "elastic_agent",
         "sql_agent": "sql_agent",
-        END: END
+        "END": END
     }
 )
 
