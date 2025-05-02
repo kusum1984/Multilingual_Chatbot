@@ -1,4 +1,4 @@
-from typing import Annotated, List, Dict, Optional
+from typing import List, Dict, Optional
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from langchain.agents import AgentExecutor, create_openai_functions_agent
@@ -147,7 +147,7 @@ def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) 
         else:
             return json.dumps({
                 "total": result['hits']['total']['value'],
-                "hits": [hit['_source'] for hit in result['hits']['hits']]  # Fixed JSON formatting
+                "hits": [hit['_source'] for hit in result['hits']['hits']]
             }, indent=2)
     except Exception as e:
         return f"Search error: {str(e)}"
@@ -216,7 +216,7 @@ def elastic_agent(query: str) -> str:
             )
         ]
         
-        # Create agent executor with corrected prompt
+        # Create agent executor
         prompt = ChatPromptTemplate.from_messages([
             ("system", get_elastic_agent_prompt()),
             MessagesPlaceholder(variable_name="chat_history"),
@@ -245,21 +245,14 @@ def elastic_agent(query: str) -> str:
             "agent_scratchpad": []
         })
         
-        # Format the final answer properly
-        output = result["output"]
-        if not output.strip():
-            return "I couldn't find any results for your query."
-        
-        return output
+        return result["output"]
     except Exception as e:
         return f"Error processing your Elasticsearch request: {str(e)}"
 
 def sql_agent(query: str) -> str:
     """Handles all SQL database related queries"""
     try:
-        # Execute the SQL agent
-        result = sql_agent_executor(query)
-        return result
+        return sql_agent_executor(query)
     except Exception as e:
         return f"Error processing your database request: {str(e)}"
 
@@ -311,45 +304,50 @@ def create_supervisor():
 
 supervisor = create_supervisor()
 
-# ================== Main Execution Function ==================
-def run_agent(query: str):
+# ================== Main Execution ==================
+def run_agent(query: str, conversation_history: List[Dict] = None):
     """Run the supervisor agent with a user query"""
     try:
-        # Prepare the input state with all required fields
+        if conversation_history is None:
+            conversation_history = []
+        
+        # Prepare the state with all required fields
         state = {
             "input": query,
-            "messages": [HumanMessage(content=query)],
+            "messages": conversation_history,
             "agent_scratchpad": []
         }
         
         # Execute the supervisor
         result = supervisor.invoke(state)
         
-        # Return the result with proper message type
-        return AIMessage(content=result)
+        # Update conversation history
+        new_history = conversation_history + [
+            HumanMessage(content=query),
+            AIMessage(content=result)
+        ]
+        
+        return AIMessage(content=result), new_history
     except Exception as e:
-        return AIMessage(content=f"Error processing your request: {str(e)}")
+        error_msg = f"Error processing your request: {str(e)}"
+        new_history = conversation_history + [
+            HumanMessage(content=query),
+            AIMessage(content=error_msg)
+        ]
+        return AIMessage(content=error_msg), new_history
 
 # ================== Example Usage ==================
 if __name__ == "__main__":
-    # Example conversation
-    questions = [
-        "List all Elasticsearch indices",
-        "Show me 3 sample documents from the logs index",
-        "Search for error logs in the application index",
-        "How many customers do we have in the database?",
-        "What are the top 5 products by sales?"
-    ]
-    
     conversation_history = []
     
-    for question in questions:
-        print(f"\nUser: {question}")
-        response = run_agent(question)
+    test_queries = [
+        "List all Elasticsearch indices",
+        "Show me 3 sample documents from the logs index",
+        "How many customers do we have in the database?",
+        "Search for error logs in the application index"
+    ]
+    
+    for query in test_queries:
+        print(f"\nUser: {query}")
+        response, conversation_history = run_agent(query, conversation_history)
         print(f"Assistant: {response.content}")
-        
-        # Update conversation history
-        conversation_history.extend([
-            HumanMessage(content=question),
-            AIMessage(content=response.content)
-        ])
