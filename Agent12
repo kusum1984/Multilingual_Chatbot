@@ -1,9 +1,9 @@
-from typing import Annotated, Literal
-from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import InjectedState, create_react_agent
+from typing import Literal, Annotated
+from langchain_openai import AzureChatOpenAI
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.types import Command
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from elasticsearch import Elasticsearch
 from dotenv import load_dotenv
 import json
@@ -13,6 +13,8 @@ from sqlalchemy import create_engine
 from langchain.sql_database import SQLDatabase
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.agents import create_sql_agent
+from langchain_core.tools import Tool
+from langchain_core.pydantic_v1 import BaseModel, Field
 
 # Load environment variables
 load_dotenv()
@@ -35,8 +37,10 @@ class Config:
         )
         
         # Initialize LLM
-        self.llm = ChatOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
+        self.llm = AzureChatOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            deployment_name="gpt-4",
             model="gpt-4",
             temperature=0
         )
@@ -58,45 +62,159 @@ class Config:
 
 cfg = Config()
 
-# ================== Elasticsearch Team ==================
-def elastic_agent(state: Annotated[dict, InjectedState]):
-    """Handles all Elasticsearch related queries"""
+# ================== Elasticsearch Agent ==================
+class ListIndicesInput(BaseModel):
+    separator: str = Field(", ", description="Separator for the list of indices")
+
+class IndexDetailsInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+
+class IndexDataInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    size: int = Field(5, description="Number of documents to retrieve")
+
+class SearchToolInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    query: str = Field(..., description="Elasticsearch JSON query")
+    from_: int = Field(0, description="Starting record index")
+    size: int = Field(10, description="Number of records to retrieve")
+
+def list_indices(separator: str = ", ") -> str:
+    """Lists all available Elasticsearch indices"""
     try:
-        user_input = state["messages"][-1].content if state.get("messages") else ""
-        
-        # Simplified Elasticsearch tools implementation
-        if "list indices" in user_input.lower():
-            indices = list(cfg.es.indices.get(index="*").keys())
-            return {"messages": [AIMessage(content=f"Available indices: {', '.join(indices)}")]}
-        elif "sample documents" in user_input.lower():
-            index_name = "logs"  # Simplified - would extract from input in real implementation
-            result = cfg.es.search(index=index_name, body={"query": {"match_all": {}}}, size=3)
-            hits = [hit['_source'] for hit in result['hits']['hits']]
-            return {"messages": [AIMessage(content=json.dumps(hits, indent=2))]}
-        else:
-            return {"messages": [AIMessage(content="Performed Elasticsearch operation")]}
+        indices = list(cfg.es.indices.get(index="*").keys())
+        return f"Available indices:{separator}{separator.join(indices)}"
     except Exception as e:
-        return {"messages": [AIMessage(content=f"Elasticsearch error: {str(e)}")]}
+        return f"Error listing indices: {str(e)}"
 
-def elastic_supervisor(state: MessagesState) -> Command[Literal["elastic_agent", END]]:
-    """Routes to Elasticsearch agent or ends conversation"""
-    # In a real implementation, this would use the LLM to decide next step
-    return Command(goto="elastic_agent")
-
-# Build Elasticsearch team graph
-elastic_builder = StateGraph(MessagesState)
-elastic_builder.add_node("elastic_supervisor", elastic_supervisor)
-elastic_builder.add_node("elastic_agent", elastic_agent)
-elastic_builder.add_edge(START, "elastic_supervisor")
-elastic_builder.add_edge("elastic_supervisor", "elastic_agent")
-elastic_builder.add_edge("elastic_agent", END)  # Simple one-step flow for demo
-elastic_team = elastic_builder.compile()
-
-# ================== SQL Team ==================
-def sql_agent(state: Annotated[dict, InjectedState]):
-    """Handles all SQL database related queries"""
+def get_index_details(index_name: str) -> str:
+    """Gets details about a specific index including mappings and settings"""
     try:
-        user_input = state["messages"][-1].content if state.get("messages") else ""
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        details = {
+            "aliases": cfg.es.indices.get_alias(index=index_name).get(index_name, {}).get("aliases", {}),
+            "mappings": cfg.es.indices.get_mapping(index=index_name).get(index_name, {}).get("mappings", {}),
+            "settings": cfg.es.indices.get_settings(index=index_name).get(index_name, {}).get("settings", {})
+        }
+        return json.dumps(details, indent=2)
+    except Exception as e:
+        return f"Error getting index details: {str(e)}"
+
+def get_index_data(index_name: str, size: int = 5) -> str:
+    """Gets sample documents from an index to understand its structure"""
+    try:
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        result = cfg.es.search(
+            index=index_name,
+            body={"query": {"match_all": {}}},
+            size=min(size, cfg.elastic_index_data_max_size)
+        )
+        hits = result.get('hits', {}).get('hits', [])
+        if not hits:
+            return f"No documents found in index '{index_name}'"
+        return json.dumps([hit['_source'] for hit in hits[:size]], indent=2)
+    except Exception as e:
+        return f"Error getting index data: {str(e)}"
+
+def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) -> str:
+    """Executes a search or aggregation query on an Elasticsearch index"""
+    try:
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        size = min(cfg.elastic_index_data_max_size, size)
+        try:
+            query_dict = json.loads(query)
+        except json.JSONDecodeError:
+            return "Invalid query format - must be valid JSON"
+
+        is_aggregation = "aggs" in query_dict or "aggregations" in query_dict
+        if is_aggregation:
+            size = cfg.aggs_limit
+
+        result = cfg.es.search(
+            index=index_name,
+            body=query_dict,
+            from_=from_,
+            size=size
+        )
+
+        if is_aggregation:
+            return json.dumps(result.get('aggregations', {}), indent=2)
+        else:
+            return json.dumps(result.get('hits', {}), indent=2)
+    except Exception as e:
+        return f"Search error: {str(e)}"
+
+elastic_tools = [
+    Tool.from_function(
+        func=list_indices,
+        name="elastic_list_indices",
+        description="Lists all available Elasticsearch indices. Always call this first.",
+        args_schema=ListIndicesInput
+    ),
+    Tool.from_function(
+        func=get_index_details,
+        name="elastic_index_details",
+        description="Gets details about a specific index including mappings and settings",
+        args_schema=IndexDetailsInput
+    ),
+    Tool.from_function(
+        func=get_index_data,
+        name="elastic_index_data",
+        description="Gets sample documents from an index to understand its structure",
+        args_schema=IndexDataInput
+    ),
+    Tool.from_function(
+        func=elastic_search,
+        name="elastic_search",
+        description="Executes search or aggregation queries on an Elasticsearch index",
+        args_schema=SearchToolInput
+    )
+]
+
+def elastic_agent(state: MessagesState) -> Command[Literal["supervisor"]]:
+    """Elasticsearch agent implementation"""
+    try:
+        user_input = state["messages"][-1].content
+        
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content="You are an Elasticsearch expert assistant"),
+            ("user", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+        
+        agent = create_openai_functions_agent(
+            llm=cfg.llm,
+            tools=elastic_tools,
+            prompt=prompt
+        )
+        
+        executor = AgentExecutor(
+            agent=agent,
+            tools=elastic_tools,
+            verbose=cfg.langchain_verbose,
+            handle_parsing_errors=True
+        )
+        
+        result = executor.invoke({"input": user_input})
+        
+        return Command(
+            goto="supervisor",
+            update={"messages": [AIMessage(content=result["output"])]}
+        )
+    except Exception as e:
+        return Command(
+            goto="supervisor",
+            update={"messages": [AIMessage(content=f"Elasticsearch error: {str(e)}")]}
+        )
+
+# ================== SQL Agent ==================
+def sql_agent(state: MessagesState) -> Command[Literal["supervisor"]]:
+    """SQL agent implementation"""
+    try:
+        user_input = state["messages"][-1].content
         
         toolkit = SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm)
         agent = create_sql_agent(
@@ -106,47 +224,47 @@ def sql_agent(state: Annotated[dict, InjectedState]):
             handle_parsing_errors=True
         )
         result = agent.run(user_input)
-        return {"messages": [AIMessage(content=str(result))]}
+        
+        return Command(
+            goto="supervisor",
+            update={"messages": [AIMessage(content=str(result))]}
+        )
     except Exception as e:
-        return {"messages": [AIMessage(content=f"SQL error: {str(e)}")]}
+        return Command(
+            goto="supervisor",
+            update={"messages": [AIMessage(content=f"SQL error: {str(e)}")]}
+        )
 
-def sql_supervisor(state: MessagesState) -> Command[Literal["sql_agent", END]]:
-    """Routes to SQL agent or ends conversation"""
-    return Command(goto="sql_agent")
-
-# Build SQL team graph
-sql_builder = StateGraph(MessagesState)
-sql_builder.add_node("sql_supervisor", sql_supervisor)
-sql_builder.add_node("sql_agent", sql_agent)
-sql_builder.add_edge(START, "sql_supervisor")
-sql_builder.add_edge("sql_supervisor", "sql_agent")
-sql_builder.add_edge("sql_agent", END)  # Simple one-step flow for demo
-sql_team = sql_builder.compile()
-
-# ================== Top-Level Supervisor ==================
-def top_level_supervisor(state: MessagesState) -> Command[Literal["elastic_team", "sql_team", END]]:
-    """Routes to appropriate team based on user input"""
-    user_input = state["messages"][-1].content
-    
-    # Simple routing logic - in real implementation would use LLM
-    if any(keyword in user_input.lower() for keyword in ["elastic", "index", "search"]):
-        return Command(goto="elastic_team")
-    elif any(keyword in user_input.lower() for keyword in ["sql", "database", "query"]):
-        return Command(goto="sql_team")
-    else:
+# ================== Supervisor ==================
+def supervisor(state: MessagesState) -> Command[Literal["elastic_agent", "sql_agent", END]]:
+    """Routes to appropriate agent based on user input"""
+    try:
+        user_input = state["messages"][-1].content
+        
+        # Simple routing logic - in production you'd use the LLM for this
+        if any(keyword in user_input.lower() for keyword in ["elastic", "index", "search"]):
+            return Command(goto="elastic_agent")
+        elif any(keyword in user_input.lower() for keyword in ["sql", "database", "query"]):
+            return Command(goto="sql_agent")
+        else:
+            return Command(goto=END)
+    except Exception as e:
         return Command(goto=END)
 
-# Build top-level graph
+# ================== Build Graph ==================
 builder = StateGraph(MessagesState)
-builder.add_node("top_level_supervisor", top_level_supervisor)
-builder.add_node("elastic_team", elastic_team)
-builder.add_node("sql_team", sql_team)
-builder.add_edge(START, "top_level_supervisor")
-builder.add_edge("top_level_supervisor", "elastic_team")
-builder.add_edge("top_level_supervisor", "sql_team")
-builder.add_edge("elastic_team", END)
-builder.add_edge("sql_team", END)
-hierarchical_agent = builder.compile()
+builder.add_node("supervisor", supervisor)
+builder.add_node("elastic_agent", elastic_agent)
+builder.add_node("sql_agent", sql_agent)
+
+builder.add_edge(START, "supervisor")
+builder.add_edge("elastic_agent", "supervisor")
+builder.add_edge("sql_agent", "supervisor")
+
+# Set termination point
+builder.add_edge("supervisor", END)
+
+multi_agent = builder.compile()
 
 # ================== Example Usage ==================
 if __name__ == "__main__":
@@ -159,6 +277,5 @@ if __name__ == "__main__":
     
     for query in test_queries:
         print(f"\nUser: {query}")
-        state = {"messages": [HumanMessage(content=query)]}
-        result = hierarchical_agent.invoke(state)
+        result = multi_agent.invoke({"messages": [HumanMessage(content=query)]})
         print(f"Assistant: {result['messages'][-1].content}")
