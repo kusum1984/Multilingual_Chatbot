@@ -127,13 +127,8 @@ def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) 
         except json.JSONDecodeError as e:
             return (
                 f"Invalid query format - must be valid JSON. Error: {str(e)}\n"
-                "Example valid query: {\"query\": {\"match\": {\"status\": \"error\"}}}"
+                "Example valid query: {{\"query\": {{\"match\": {{\"status\": \"error\"}}}}"
             )
-
-        # Determine if this is a search or aggregation
-        is_aggregation = "aggs" in query_dict or "aggregations" in query_dict
-        if is_aggregation:
-            size = cfg.aggs_limit
 
         result = cfg.es.search(
             index=index_name,
@@ -142,7 +137,7 @@ def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) 
             size=size
         )
 
-        if is_aggregation:
+        if "aggs" in query_dict or "aggregations" in query_dict:
             return json.dumps(result.get('aggregations', {}), indent=2)
         else:
             return json.dumps({
@@ -188,7 +183,6 @@ Important Rules:
 def elastic_agent(query: str) -> str:
     """Handles all Elasticsearch related queries"""
     try:
-        # Create Elasticsearch tools
         elastic_tools = [
             Tool.from_function(
                 func=list_indices,
@@ -216,11 +210,9 @@ def elastic_agent(query: str) -> str:
             )
         ]
         
-        # Create agent executor
         prompt = ChatPromptTemplate.from_messages([
             ("system", get_elastic_agent_prompt()),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("user", "{input}"),
+            ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad")
         ])
         
@@ -238,10 +230,8 @@ def elastic_agent(query: str) -> str:
             handle_parsing_errors=True
         )
         
-        # Execute the agent
         result = executor.invoke({
             "input": query,
-            "chat_history": [],
             "agent_scratchpad": []
         })
         
@@ -295,8 +285,7 @@ def create_supervisor():
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", get_supervisor_prompt()),
-        MessagesPlaceholder(variable_name="messages"),
-        ("user", "{input}"),
+        ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")
     ])
     
@@ -305,41 +294,21 @@ def create_supervisor():
 supervisor = create_supervisor()
 
 # ================== Main Execution ==================
-def run_agent(query: str, conversation_history: List[Dict] = None):
+def run_agent(query: str):
     """Run the supervisor agent with a user query"""
     try:
-        if conversation_history is None:
-            conversation_history = []
-        
-        # Prepare the state with all required fields
         state = {
             "input": query,
-            "messages": conversation_history,
             "agent_scratchpad": []
         }
         
-        # Execute the supervisor
         result = supervisor.invoke(state)
-        
-        # Update conversation history
-        new_history = conversation_history + [
-            HumanMessage(content=query),
-            AIMessage(content=result)
-        ]
-        
-        return AIMessage(content=result), new_history
+        return AIMessage(content=result)
     except Exception as e:
-        error_msg = f"Error processing your request: {str(e)}"
-        new_history = conversation_history + [
-            HumanMessage(content=query),
-            AIMessage(content=error_msg)
-        ]
-        return AIMessage(content=error_msg), new_history
+        return AIMessage(content=f"Error processing your request: {str(e)}")
 
 # ================== Example Usage ==================
 if __name__ == "__main__":
-    conversation_history = []
-    
     test_queries = [
         "List all Elasticsearch indices",
         "Show me 3 sample documents from the logs index",
@@ -349,5 +318,5 @@ if __name__ == "__main__":
     
     for query in test_queries:
         print(f"\nUser: {query}")
-        response, conversation_history = run_agent(query, conversation_history)
+        response = run_agent(query)
         print(f"Assistant: {response.content}")
