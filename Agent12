@@ -1,8 +1,6 @@
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import create_react_agent, ToolNode, MessagesState
-from langchain_core.tools import tool, BaseTool
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain.agents import AgentExecutor, create_sql_agent
+from langgraph.prebuilt import create_react_agent
+from langgraph_supervisor import create_supervisor
+from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.sql_database import SQLDatabase
 from langchain_openai import AzureChatOpenAI
@@ -12,16 +10,15 @@ import urllib.parse
 import os
 import json
 from dotenv import load_dotenv
-from typing import Annotated, Optional, Dict, List
-from langgraph.types import Command
-from langgraph.prebuilt import InjectedState, InjectedToolCallId
 from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+from IPython.display import display, Image
 
 # Load environment variables
 load_dotenv()
 
 # ========================
-# 1. Configuration Setup
+# 1. Configuration Setup (EXACTLY as you specified)
 # ========================
 class Config:
     def __init__(self):
@@ -40,7 +37,7 @@ class Config:
             verify_certs=False
         )
         
-        # Initialize LLM
+        # Initialize Azure OpenAI
         self.llm = AzureChatOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
@@ -67,7 +64,7 @@ class Config:
 cfg = Config()
 
 # ========================
-# 2. Elasticsearch Tools
+# 2. Elasticsearch Tools (COMPLETE implementation)
 # ========================
 class ListIndicesInput(BaseModel):
     separator: str = Field(", ", description="Separator for the list of indices")
@@ -133,14 +130,12 @@ def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) 
     try:
         if not cfg.es.indices.exists(index=index_name):
             return f"Index '{index_name}' does not exist"
-        
         size = min(cfg.elastic_index_data_max_size, size)
         try:
             query_dict = json.loads(query)
         except json.JSONDecodeError:
             return "Invalid query format - must be valid JSON"
 
-        # Determine if this is a search or aggregation
         is_aggregation = "aggs" in query_dict or "aggregations" in query_dict
         if is_aggregation:
             size = cfg.aggs_limit
@@ -162,121 +157,73 @@ def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) 
 elastic_tools = [list_indices, get_index_details, get_index_data, elastic_search]
 
 # ========================
-# 3. SQL Tools
-# ========================
-sql_toolkit = SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm)
-sql_tools = sql_toolkit.get_tools()
-
-# ========================
-# 4. Agent Creation
+# 3. Create Agents (Following Research/Math Supervisor Pattern)
 # ========================
 # Elasticsearch Agent
 elastic_agent = create_react_agent(
-    model=cfg.llm,
+    model=cfg.llm,  # Using your Azure OpenAI instance
     tools=elastic_tools,
     prompt=(
-        "You are an Elasticsearch expert.\n"
+        "You are an Elasticsearch expert agent.\n\n"
         "INSTRUCTIONS:\n"
         "- First list available indices with list_indices\n"
         "- Use get_index_details or get_index_data to understand structure\n"
         "- Use elastic_search for complex queries\n"
-        "- Return ONLY the results, no extra text."
+        "- Return ONLY the results, no extra text"
     ),
     name="elastic_agent"
 )
 
 # SQL Agent
 sql_agent = create_sql_agent(
-    llm=cfg.llm,
-    toolkit=sql_toolkit,
+    llm=cfg.llm,  # Using your Azure OpenAI instance
+    toolkit=SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm),
     verbose=cfg.langchain_verbose,
     handle_parsing_errors=True,
-    agent_type="openai-tools"
+    agent_type="openai-tools",
+    name="sql_agent"
 )
 
 # ========================
-# 5. Supervisor System
+# 4. Supervisor Setup (Identical to Research/Math Example)
 # ========================
-def create_handoff_tool(agent_name: str, description: str | None = None):
-    name = f"transfer_to_{agent_name}"
-    description = description or f"Ask {agent_name} for help."
-
-    @tool(name, description=description)
-    def handoff_tool(
-        state: Annotated[MessagesState, InjectedState],
-        tool_call_id: Annotated[str, InjectedToolCallId],
-    ) -> Command:
-        tool_message = {
-            "role": "tool",
-            "content": f"Successfully transferred to {agent_name}",
-            "name": name,
-            "tool_call_id": tool_call_id,
-        }
-        return Command(
-            goto=agent_name,
-            update={**state, "messages": state["messages"] + [tool_message]},
-            graph=Command.PARENT,
-        )
-    return handoff_tool
-
-# Supervisor Tools
-assign_to_elastic = create_handoff_tool(
-    agent_name="elastic_agent",
-    description="Assign task to Elasticsearch expert."
-)
-
-assign_to_sql = create_handoff_tool(
-    agent_name="sql_agent",
-    description="Assign task to SQL database expert."
-)
-
-# Supervisor Agent
-supervisor_agent = create_react_agent(
-    model=cfg.llm,
-    tools=[assign_to_elastic, assign_to_sql],
+supervisor = create_supervisor(
+    model=cfg.llm,  # Using your Azure OpenAI instance
+    agents=[elastic_agent, sql_agent],
     prompt=(
-        "You are a supervisor managing two experts:\n"
-        "- Elasticsearch agent: For NoSQL data queries\n"
-        "- SQL agent: For relational database queries\n"
-        "Analyze the request and delegate to the appropriate agent.\n"
-        "Do not attempt to answer queries yourself."
+        "You are a supervisor managing:\n"
+        "- elastic_agent: For Elasticsearch operations\n"
+        "- sql_agent: For SQL database queries\n"
+        "Assign tasks based on these rules:\n"
+        "1. Data search/index operations → elastic_agent\n"
+        "2. Database queries → sql_agent\n"
+        "Assign one task at a time and wait for completion."
     ),
-    name="supervisor"
-)
+    add_handoff_back_messages=True,
+    output_mode="full_history"
+).compile()
+
+# Display workflow
+display(Image(supervisor.get_graph().draw_mermaid_png()))
 
 # ========================
-# 6. Multi-Agent Graph
-# ========================
-workflow = StateGraph(MessagesState)
-workflow.add_node("supervisor", supervisor_agent)
-workflow.add_node("elastic_agent", elastic_agent)
-workflow.add_node("sql_agent", sql_agent)
-
-# Define edges
-workflow.add_edge(START, "supervisor")
-workflow.add_edge("elastic_agent", "supervisor")
-workflow.add_edge("sql_agent", "supervisor")
-workflow.add_conditional_edges(
-    "supervisor",
-    lambda x: END if "messages" in x and len(x["messages"]) > 5 else "supervisor"
-)
-
-# Compile
-app = workflow.compile()
-
-# ========================
-# 7. Execution Example
+# 5. Execution Example
 # ========================
 def run_query(query: str):
-    response = app.invoke({
-        "messages": [HumanMessage(content=query)]
-    })
-    
-    print("\n=== FINAL RESPONSE ===")
-    for msg in response["messages"]:
-        if msg["role"] in ["user", "assistant"]:
-            print(f"{msg['role'].upper()}: {msg['content']}")
+    print(f"\n=== Processing: {query} ===")
+    for chunk in supervisor.stream(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": query
+                }
+            ]
+        }
+    ):
+        # Implement your message printing logic here
+        print(chunk)
 
 # Example queries
-run_query("Get total sales from SQL database and top 5 products from Elasticsearch")
-run_query("Show me the schema of the SQL database and list all Elasticsearch indices")
+run_query("List all indices and count records in SQL customers table")
+run_query("Get index details for 'products' and show 5 sample SQL orders")
