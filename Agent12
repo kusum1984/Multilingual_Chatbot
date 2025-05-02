@@ -1,7 +1,8 @@
 from typing import Literal, Annotated
+from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import AzureChatOpenAI
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.types import Command
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, ToolExecutor
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from elasticsearch import Elasticsearch
@@ -62,7 +63,7 @@ class Config:
 
 cfg = Config()
 
-# ================== Elasticsearch Agent ==================
+# ================== Elasticsearch Tools ==================
 class ListIndicesInput(BaseModel):
     separator: str = Field(", ", description="Separator for the list of indices")
 
@@ -174,95 +175,112 @@ elastic_tools = [
     )
 ]
 
-def elastic_agent(state: MessagesState) -> Command[Literal["supervisor"]]:
-    """Elasticsearch agent implementation"""
-    try:
-        user_input = state["messages"][-1].content
-        
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content="You are an Elasticsearch expert assistant"),
-            ("user", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad")
-        ])
-        
-        agent = create_openai_functions_agent(
-            llm=cfg.llm,
-            tools=elastic_tools,
-            prompt=prompt
-        )
-        
-        executor = AgentExecutor(
-            agent=agent,
-            tools=elastic_tools,
-            verbose=cfg.langchain_verbose,
-            handle_parsing_errors=True
-        )
-        
-        result = executor.invoke({"input": user_input})
-        
-        return Command(
-            goto="supervisor",
-            update={"messages": [AIMessage(content=result["output"])]}
-        )
-    except Exception as e:
-        return Command(
-            goto="supervisor",
-            update={"messages": [AIMessage(content=f"Elasticsearch error: {str(e)}")]}
-        )
+# ================== Elasticsearch Agent ==================
+def create_elastic_agent() -> AgentExecutor:
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content="You are an Elasticsearch expert assistant"),
+        ("user", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad")
+    ])
+    
+    agent = create_openai_tools_agent(
+        llm=cfg.llm,
+        tools=elastic_tools,
+        prompt=prompt
+    )
+    
+    return AgentExecutor(
+        agent=agent,
+        tools=elastic_tools,
+        verbose=cfg.langchain_verbose,
+        handle_parsing_errors=True
+    )
+
+elastic_agent_executor = create_elastic_agent()
 
 # ================== SQL Agent ==================
-def sql_agent(state: MessagesState) -> Command[Literal["supervisor"]]:
-    """SQL agent implementation"""
-    try:
-        user_input = state["messages"][-1].content
-        
-        toolkit = SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm)
-        agent = create_sql_agent(
-            llm=cfg.llm,
-            toolkit=toolkit,
-            verbose=cfg.langchain_verbose,
-            handle_parsing_errors=True
-        )
-        result = agent.run(user_input)
-        
-        return Command(
-            goto="supervisor",
-            update={"messages": [AIMessage(content=str(result))]}
-        )
-    except Exception as e:
-        return Command(
-            goto="supervisor",
-            update={"messages": [AIMessage(content=f"SQL error: {str(e)}")]}
-        )
+sql_toolkit = SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm)
+sql_agent_executor = create_sql_agent(
+    llm=cfg.llm,
+    toolkit=sql_toolkit,
+    verbose=cfg.langchain_verbose,
+    handle_parsing_errors=True
+)
 
-# ================== Supervisor ==================
-def supervisor(state: MessagesState) -> Command[Literal["elastic_agent", "sql_agent", END]]:
+# ================== Multi-Agent Supervisor ==================
+def supervisor(state: dict) -> Literal["elastic_agent", "sql_agent", END]:
     """Routes to appropriate agent based on user input"""
     try:
-        user_input = state["messages"][-1].content
+        messages = state.get("messages", [])
+        if not messages:
+            return END
+        
+        user_input = messages[-1].content
         
         # Simple routing logic - in production you'd use the LLM for this
         if any(keyword in user_input.lower() for keyword in ["elastic", "index", "search"]):
-            return Command(goto="elastic_agent")
+            return "elastic_agent"
         elif any(keyword in user_input.lower() for keyword in ["sql", "database", "query"]):
-            return Command(goto="sql_agent")
+            return "sql_agent"
         else:
-            return Command(goto=END)
+            return END
     except Exception as e:
-        return Command(goto=END)
+        print(f"Supervisor error: {str(e)}")
+        return END
+
+# ================== Agent Nodes ==================
+def elastic_agent(state: dict):
+    """Elasticsearch agent node"""
+    try:
+        messages = state.get("messages", [])
+        if not messages:
+            return {"messages": []}
+        
+        user_input = messages[-1].content
+        result = elastic_agent_executor.invoke({"input": user_input})
+        return {"messages": [AIMessage(content=result["output"])]}
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"Elasticsearch error: {str(e)}")]}
+
+def sql_agent(state: dict):
+    """SQL agent node"""
+    try:
+        messages = state.get("messages", [])
+        if not messages:
+            return {"messages": []}
+        
+        user_input = messages[-1].content
+        result = sql_agent_executor.run(user_input)
+        return {"messages": [AIMessage(content=str(result))]}
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"SQL error: {str(e)}")]}
 
 # ================== Build Graph ==================
-builder = StateGraph(MessagesState)
+builder = StateGraph(dict)
+
+# Add nodes
 builder.add_node("supervisor", supervisor)
 builder.add_node("elastic_agent", elastic_agent)
 builder.add_node("sql_agent", sql_agent)
 
+# Set edges
 builder.add_edge(START, "supervisor")
 builder.add_edge("elastic_agent", "supervisor")
 builder.add_edge("sql_agent", "supervisor")
 
 # Set termination point
 builder.add_edge("supervisor", END)
+
+# Conditional edges
+builder.add_conditional_edges(
+    "supervisor",
+    lambda state: state["supervisor"],
+    {
+        "elastic_agent": "elastic_agent",
+        "sql_agent": "sql_agent",
+        END: END
+    }
+)
 
 multi_agent = builder.compile()
 
