@@ -1,0 +1,207 @@
+# assistant.py
+
+from typing import Annotated, List, Dict, Optional
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
+from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.tools import Tool
+from langchain_core.pydantic_v1 import BaseModel, Field
+from elasticsearch import Elasticsearch
+from dotenv import load_dotenv
+import json
+import os
+import urllib.parse
+from sqlalchemy import create_engine
+from langchain.sql_database import SQLDatabase
+from langchain.agents.agent_toolkits import SQLDatabaseToolkit
+from langchain.agents import create_sql_agent
+
+# ============== Load Configuration ==============
+load_dotenv()
+
+class Config:
+    def __init__(self):
+        self.elastic_index_data_max_size = 50
+        self.aggs_limit = 5
+        self.langchain_verbose = True
+
+        self.es = Elasticsearch(
+            os.getenv("ELASTIC_ENDPOINT"),
+            api_key=os.getenv("ELASTIC_API_KEY"),
+            verify_certs=False
+        )
+
+        self.llm = ChatOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model="gpt-4",
+            temperature=0
+        )
+
+        driver = '{ODBC Driver 18 for SQL Server}'
+        server = os.getenv("SQL_SERVER")
+        database = os.getenv("SQL_DATABASE")
+        user = os.getenv("SQL_USER")
+        password = os.getenv("SQL_PASSWORD")
+
+        conn = f"Driver={driver};Server=tcp:{server},1433;Database={database};Uid={user};Pwd={password};Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+        params = urllib.parse.quote_plus(conn)
+        conn_str = f'mssql+pyodbc:///?autocommit=true&odbc_connect={params}'
+        engine = create_engine(conn_str)
+        self.sql_db = SQLDatabase(engine, schema="comp")
+
+cfg = Config()
+
+# ============== Elasticsearch Tool Schemas ==============
+class ListIndicesInput(BaseModel):
+    separator: str = Field(", ", description="Separator for the list of indices")
+
+class IndexDetailsInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+
+class IndexDataInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    size: int = Field(5, description="Number of documents to retrieve")
+
+class SearchToolInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    query: str = Field(..., description="Elasticsearch JSON query")
+    from_: int = Field(0, description="Starting record index")
+    size: int = Field(10, description="Number of records to retrieve")
+
+# ============== Elasticsearch Tool Functions ==============
+def list_indices(separator: str = ", ") -> str:
+    indices = list(cfg.es.indices.get(index="*").keys())
+    return f"Available indices:{separator}{separator.join(indices)}"
+
+def get_index_details(index_name: str) -> str:
+    if not cfg.es.indices.exists(index=index_name):
+        return f"Index '{index_name}' does not exist"
+    details = {
+        "aliases": cfg.es.indices.get_alias(index=index_name).get(index_name, {}).get("aliases", {}),
+        "mappings": cfg.es.indices.get_mapping(index=index_name).get(index_name, {}).get("mappings", {}),
+        "settings": cfg.es.indices.get_settings(index=index_name).get(index_name, {}).get("settings", {})
+    }
+    return json.dumps(details, indent=2)
+
+def get_index_data(index_name: str, size: int = 5) -> str:
+    if not cfg.es.indices.exists(index=index_name):
+        return f"Index '{index_name}' does not exist"
+    result = cfg.es.search(
+        index=index_name,
+        body={"query": {"match_all": {}}},
+        size=min(size, cfg.elastic_index_data_max_size)
+    )
+    hits = result.get('hits', {}).get('hits', [])
+    return json.dumps([hit['_source'] for hit in hits], indent=2)
+
+def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) -> str:
+    if not cfg.es.indices.exists(index=index_name):
+        return f"Index '{index_name}' does not exist"
+    query_dict = json.loads(query)
+    is_aggregation = "aggs" in query_dict or "aggregations" in query_dict
+    result = cfg.es.search(
+        index=index_name,
+        body=query_dict,
+        from_=from_,
+        size=min(size, cfg.elastic_index_data_max_size if not is_aggregation else cfg.aggs_limit)
+    )
+    if is_aggregation:
+        return json.dumps(result.get("aggregations", {}), indent=2)
+    else:
+        return json.dumps({
+            "total": result['hits']['total']['value'],
+            "hits": [hit['_source'] for hit in result['hits']['hits']]
+        }, indent=2)
+
+# ============== SQL Agent ==============
+def sql_agent_executor(query: str) -> str:
+    toolkit = SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm)
+    agent = create_sql_agent(
+        llm=cfg.llm,
+        toolkit=toolkit,
+        verbose=cfg.langchain_verbose,
+        handle_parsing_errors=True
+    )
+    return agent.run(query)
+
+# ============== Elasticsearch Agent ==============
+def get_elastic_agent_prompt():
+    return """You are an expert Elasticsearch assistant. Follow these steps:
+1. List available indices if needed.
+2. Use index details and sample data to understand structure.
+3. Then perform searches or aggregations.
+Return helpful, clear, and well-formatted answers."""
+
+def elastic_agent(query: str) -> str:
+    tools = [
+        Tool.from_function(func=list_indices, name="elastic_list_indices", description="List all indices", args_schema=ListIndicesInput),
+        Tool.from_function(func=get_index_details, name="elastic_index_details", description="Get index mappings", args_schema=IndexDetailsInput),
+        Tool.from_function(func=get_index_data, name="elastic_index_data", description="Get sample documents", args_schema=IndexDataInput),
+        Tool.from_function(func=elastic_search, name="elastic_search", description="Run queries", args_schema=SearchToolInput)
+    ]
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", get_elastic_agent_prompt()),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("user", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad")
+    ])
+
+    agent = create_openai_functions_agent(cfg.llm, tools, prompt=prompt)
+    executor = AgentExecutor(agent=agent, tools=tools, verbose=cfg.langchain_verbose, handle_parsing_errors=True)
+    return executor.invoke({
+        "input": query,
+        "chat_history": [],
+        "agent_scratchpad": []
+    })["output"]
+
+# ============== SQL Agent Wrapper ==============
+def sql_agent(query: str) -> str:
+    return sql_agent_executor(query)
+
+# ============== Supervisor Agent ==============
+def get_supervisor_prompt():
+    return """Route the user query to the right agent:
+- Use Elasticsearch Agent for 'search', 'index', 'logs', 'aggregation'
+- Use SQL Agent for 'database', 'SQL', 'records', 'customers'
+Return the final answer clearly."""
+
+def create_supervisor():
+    tools = [
+        Tool.from_function(func=elastic_agent, name="Elasticsearch_Agent", description="Handle Elasticsearch queries"),
+        Tool.from_function(func=sql_agent, name="SQL_Agent", description="Handle SQL queries")
+    ]
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", get_supervisor_prompt()),
+        ("user", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad")
+    ])
+    return create_react_agent(cfg.llm, tools, prompt=prompt)
+
+supervisor = create_supervisor()
+
+def run_agent(query: str):
+    try:
+        result = supervisor.invoke({
+            "input": query,
+            "agent_scratchpad": [],
+            "messages": [HumanMessage(content=query)]
+        })
+        return AIMessage(content=result)
+    except Exception as e:
+        return AIMessage(content=f"Error: {str(e)}")
+
+# ============== Test ==============
+if __name__ == "__main__":
+    queries = [
+        "List all Elasticsearch indices",
+        "Show me 3 sample documents from the logs index",
+        "Search for error logs in the application index",
+        "How many customers do we have in the database?",
+        "What are the top 5 products by sales?"
+    ]
+    for q in queries:
+        print(f"\nUser: {q}")
+        print(f"Assistant: {run_agent(q).content}")
