@@ -1,24 +1,28 @@
-from typing import Dict, List, Union
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain_openai import AzureChatOpenAI
-from langgraph.graph import StateGraph, START, END
-from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from elasticsearch import Elasticsearch
-from dotenv import load_dotenv
-import json
-import os
-import urllib.parse
-from sqlalchemy import create_engine
-from langchain.sql_database import SQLDatabase
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import create_react_agent, ToolNode, MessagesState
+from langchain_core.tools import tool, BaseTool
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain.agents import AgentExecutor, create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
-from langchain.agents import create_sql_agent
-from langchain.tools import Tool
-from langchain.pydantic_v1 import BaseModel, Field
+from langchain.sql_database import SQLDatabase
+from langchain_openai import AzureChatOpenAI
+from elasticsearch import Elasticsearch
+from sqlalchemy import create_engine
+import urllib.parse
+import os
+import json
+from dotenv import load_dotenv
+from typing import Annotated, Optional, Dict, List
+from langgraph.types import Command
+from langgraph.prebuilt import InjectedState, InjectedToolCallId
+from pydantic import BaseModel, Field
 
 # Load environment variables
 load_dotenv()
 
+# ========================
+# 1. Configuration Setup
+# ========================
 class Config:
     def __init__(self):
         # Elasticsearch config
@@ -29,9 +33,9 @@ class Config:
         self.max_search_retries = 3
         self.token_limit = 3000
         
-        # Initialize Elasticsearch client
+        # Initialize Elasticsearch
         self.es = Elasticsearch(
-            os.getenv("ELASTIC_ENDPOINT", "http://localhost:9200"),
+            os.getenv("ELASTIC_ENDPOINT"),
             api_key=os.getenv("ELASTIC_API_KEY"),
             verify_certs=False
         )
@@ -45,252 +49,234 @@ class Config:
             temperature=0
         )
         
-        # SQL Server connection setup
+        # SQL Server connection
         driver = '{ODBC Driver 18 for SQL Server}'
-        server = os.getenv("SQL_SERVER", "localhost")
-        database = os.getenv("SQL_DATABASE", "master")
-        user = os.getenv("SQL_USER", "sa")
-        password = os.getenv("SQL_PASSWORD", "password")
+        server = os.getenv("SQL_SERVER")
+        database = os.getenv("SQL_DATABASE")
+        user = os.getenv("SQL_USER")
+        password = os.getenv("SQL_PASSWORD")
         
         conn = f"Driver={driver};Server=tcp:{server},1433;Database={database};Uid={user};Pwd={password};Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
         params = urllib.parse.quote_plus(conn)
         conn_str = f'mssql+pyodbc:///?autocommit=true&odbc_connect={params}'
-        engine = create_engine(conn_str)
-        self.sql_db = SQLDatabase(engine, schema="dbo")
+        self.engine = create_engine(conn_str)
+        self.sql_db = SQLDatabase(self.engine)
         
         self.langchain_verbose = True
 
 cfg = Config()
 
-# ================== Elasticsearch Tools ==================
-
+# ========================
+# 2. Elasticsearch Tools
+# ========================
 class ListIndicesInput(BaseModel):
-    pattern: str = Field(default="*", description="Index pattern to match")
+    separator: str = Field(", ", description="Separator for the list of indices")
 
-def list_indices(pattern: str = "*") -> str:
-    """List all Elasticsearch indices matching a pattern"""
+class IndexDetailsInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+
+class IndexDataInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    size: int = Field(5, description="Number of documents to retrieve")
+
+class SearchToolInput(BaseModel):
+    index_name: str = Field(..., description="Name of the Elasticsearch index")
+    query: str = Field(..., description="Elasticsearch JSON query")
+    from_: int = Field(0, description="Starting record index")
+    size: int = Field(10, description="Number of records to retrieve")
+
+@tool(args_schema=ListIndicesInput)
+def list_indices(separator: str = ", ") -> str:
+    """Lists all available Elasticsearch indices"""
     try:
-        response = cfg.es.cat.indices(index=pattern, format="json")
-        return json.dumps(response, indent=2)
+        indices = list(cfg.es.indices.get(index="*").keys())
+        return f"Available indices:{separator}{separator.join(indices)}"
     except Exception as e:
         return f"Error listing indices: {str(e)}"
 
-class SearchIndexInput(BaseModel):
-    index_name: str = Field(description="Name of the index to search")
-    query: str = Field(description="Elasticsearch query in JSON format")
-    size: int = Field(default=10, description="Number of results to return")
-
-def search_index(index_name: str, query: str, size: int = 10) -> str:
-    """Search documents in an Elasticsearch index"""
+@tool(args_schema=IndexDetailsInput)
+def get_index_details(index_name: str) -> str:
+    """Gets details about a specific index including mappings and settings"""
     try:
-        query_json = json.loads(query)
-        response = cfg.es.search(index=index_name, body=query_json, size=size)
-        return json.dumps(response, indent=2)
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        details = {
+            "aliases": cfg.es.indices.get_alias(index=index_name).get(index_name, {}).get("aliases", {}),
+            "mappings": cfg.es.indices.get_mapping(index=index_name).get(index_name, {}).get("mappings", {}),
+            "settings": cfg.es.indices.get_settings(index=index_name).get(index_name, {}).get("settings", {})
+        }
+        return json.dumps(details, indent=2)
     except Exception as e:
-        return f"Error searching index: {str(e)}"
+        return f"Error getting index details: {str(e)}"
 
-class GetIndexMappingInput(BaseModel):
-    index_name: str = Field(description="Name of the index")
-
-def get_index_mapping(index_name: str) -> str:
-    """Get mapping for an Elasticsearch index"""
+@tool(args_schema=IndexDataInput)
+def get_index_data(index_name: str, size: int = 5) -> str:
+    """Gets sample documents from an index to understand its structure"""
     try:
-        response = cfg.es.indices.get_mapping(index=index_name)
-        return json.dumps(response, indent=2)
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        result = cfg.es.search(
+            index=index_name,
+            body={"query": {"match_all": {}}},
+            size=min(size, cfg.elastic_index_data_max_size)
+        )
+        hits = result.get('hits', {}).get('hits', [])
+        if not hits:
+            return f"No documents found in index '{index_name}'"
+        return json.dumps([hit['_source'] for hit in hits[:size]], indent=2)
     except Exception as e:
-        return f"Error getting index mapping: {str(e)}"
+        return f"Error getting index data: {str(e)}"
 
-# Create Elasticsearch tools
-elastic_tools = [
-    Tool(
-        name="list_indices",
-        func=list_indices,
-        description="List all Elasticsearch indices matching a pattern",
-        args_schema=ListIndicesInput
-    ),
-    Tool(
-        name="search_index",
-        func=search_index,
-        description="Search documents in an Elasticsearch index. Input should be index name and a JSON query.",
-        args_schema=SearchIndexInput
-    ),
-    Tool(
-        name="get_index_mapping",
-        func=get_index_mapping,
-        description="Get mapping/schema for an Elasticsearch index",
-        args_schema=GetIndexMappingInput
-    )
-]
+@tool(args_schema=SearchToolInput)
+def elastic_search(index_name: str, query: str, from_: int = 0, size: int = 10) -> str:
+    """Executes a search or aggregation query on an Elasticsearch index"""
+    try:
+        if not cfg.es.indices.exists(index=index_name):
+            return f"Index '{index_name}' does not exist"
+        
+        size = min(cfg.elastic_index_data_max_size, size)
+        try:
+            query_dict = json.loads(query)
+        except json.JSONDecodeError:
+            return "Invalid query format - must be valid JSON"
 
-# ================== Elasticsearch Agent ==================
-def create_elastic_agent() -> AgentExecutor:
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="You are an Elasticsearch expert assistant"),
-        ("user", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad")
-    ])
-    
-    agent = create_openai_tools_agent(
-        llm=cfg.llm,
-        tools=elastic_tools,
-        prompt=prompt
-    )
-    
-    return AgentExecutor(
-        agent=agent,
-        tools=elastic_tools,
-        verbose=cfg.langchain_verbose,
-        handle_parsing_errors=True
-    )
+        # Determine if this is a search or aggregation
+        is_aggregation = "aggs" in query_dict or "aggregations" in query_dict
+        if is_aggregation:
+            size = cfg.aggs_limit
 
-elastic_agent_executor = create_elastic_agent()
+        result = cfg.es.search(
+            index=index_name,
+            body=query_dict,
+            from_=from_,
+            size=size
+        )
 
-# ================== SQL Agent ==================
+        if is_aggregation:
+            return json.dumps(result.get('aggregations', {}), indent=2)
+        else:
+            return json.dumps(result.get('hits', {}), indent=2)
+    except Exception as e:
+        return f"Search error: {str(e)}"
+
+elastic_tools = [list_indices, get_index_details, get_index_data, elastic_search]
+
+# ========================
+# 3. SQL Tools
+# ========================
 sql_toolkit = SQLDatabaseToolkit(db=cfg.sql_db, llm=cfg.llm)
-sql_agent_executor = create_sql_agent(
+sql_tools = sql_toolkit.get_tools()
+
+# ========================
+# 4. Agent Creation
+# ========================
+# Elasticsearch Agent
+elastic_agent = create_react_agent(
+    model=cfg.llm,
+    tools=elastic_tools,
+    prompt=(
+        "You are an Elasticsearch expert.\n"
+        "INSTRUCTIONS:\n"
+        "- First list available indices with list_indices\n"
+        "- Use get_index_details or get_index_data to understand structure\n"
+        "- Use elastic_search for complex queries\n"
+        "- Return ONLY the results, no extra text."
+    ),
+    name="elastic_agent"
+)
+
+# SQL Agent
+sql_agent = create_sql_agent(
     llm=cfg.llm,
     toolkit=sql_toolkit,
     verbose=cfg.langchain_verbose,
-    handle_parsing_errors=True
+    handle_parsing_errors=True,
+    agent_type="openai-tools"
 )
 
-# ================== State Definition ==================
-class AgentState(dict):
-    @property
-    def messages(self) -> List[Union[HumanMessage, AIMessage]]:
-        return self.get("messages", [])
-    
-    @property
-    def next_node(self) -> str:
-        return self.get("next_node", "END")
+# ========================
+# 5. Supervisor System
+# ========================
+def create_handoff_tool(agent_name: str, description: str | None = None):
+    name = f"transfer_to_{agent_name}"
+    description = description or f"Ask {agent_name} for help."
 
-# ================== Multi-Agent Supervisor ==================
-def supervisor(state: AgentState) -> Dict:
-    """Routes to appropriate agent based on user input"""
-    try:
-        current_messages = state.messages.copy() if state.messages else []
-        
-        if not current_messages:
-            return {"messages": [], "next_node": "END"}
-        
-        user_input = current_messages[-1].content
-        
-        # Routing logic
-        if any(keyword in user_input.lower() for keyword in ["elastic", "index", "search"]):
-            return {"messages": current_messages, "next_node": "elastic_agent"}
-        elif any(keyword in user_input.lower() for keyword in ["sql", "database", "query", "table"]):
-            return {"messages": current_messages, "next_node": "sql_agent"}
-        else:
-            # Default to Elasticsearch if unsure
-            return {"messages": current_messages, "next_node": "elastic_agent"}
-    except Exception as e:
-        error_msg = AIMessage(content=f"Supervisor error: {str(e)}")
-        return {
-            "messages": state.messages + [error_msg],
-            "next_node": "END"
+    @tool(name, description=description)
+    def handoff_tool(
+        state: Annotated[MessagesState, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId],
+    ) -> Command:
+        tool_message = {
+            "role": "tool",
+            "content": f"Successfully transferred to {agent_name}",
+            "name": name,
+            "tool_call_id": tool_call_id,
         }
+        return Command(
+            goto=agent_name,
+            update={**state, "messages": state["messages"] + [tool_message]},
+            graph=Command.PARENT,
+        )
+    return handoff_tool
 
-# ================== Agent Nodes ==================
-def elastic_agent(state: AgentState) -> Dict:
-    """Elasticsearch agent node"""
-    try:
-        current_messages = state.messages.copy()
-        if not current_messages:
-            return {"messages": [], "next_node": "supervisor"}
-        
-        user_input = current_messages[-1].content
-        result = elastic_agent_executor.invoke({"input": user_input})
-        return {
-            "messages": current_messages + [AIMessage(content=result["output"])],
-            "next_node": "supervisor"
-        }
-    except Exception as e:
-        return {
-            "messages": state.messages + [AIMessage(content=f"Elasticsearch error: {str(e)}")],
-            "next_node": "supervisor"
-        }
+# Supervisor Tools
+assign_to_elastic = create_handoff_tool(
+    agent_name="elastic_agent",
+    description="Assign task to Elasticsearch expert."
+)
 
-def sql_agent(state: AgentState) -> Dict:
-    """SQL agent node"""
-    try:
-        current_messages = state.messages.copy()
-        if not current_messages:
-            return {"messages": [], "next_node": "supervisor"}
-        
-        user_input = current_messages[-1].content
-        result = sql_agent_executor.run(user_input)
-        return {
-            "messages": current_messages + [AIMessage(content=str(result))],
-            "next_node": "supervisor"
-        }
-    except Exception as e:
-        return {
-            "messages": state.messages + [AIMessage(content=f"SQL error: {str(e)}")],
-            "next_node": "supervisor"
-        }
+assign_to_sql = create_handoff_tool(
+    agent_name="sql_agent",
+    description="Assign task to SQL database expert."
+)
 
-# ================== Build Graph ==================
-builder = StateGraph(AgentState)
+# Supervisor Agent
+supervisor_agent = create_react_agent(
+    model=cfg.llm,
+    tools=[assign_to_elastic, assign_to_sql],
+    prompt=(
+        "You are a supervisor managing two experts:\n"
+        "- Elasticsearch agent: For NoSQL data queries\n"
+        "- SQL agent: For relational database queries\n"
+        "Analyze the request and delegate to the appropriate agent.\n"
+        "Do not attempt to answer queries yourself."
+    ),
+    name="supervisor"
+)
 
-# Add nodes
-builder.add_node("supervisor", supervisor)
-builder.add_node("elastic_agent", elastic_agent)
-builder.add_node("sql_agent", sql_agent)
+# ========================
+# 6. Multi-Agent Graph
+# ========================
+workflow = StateGraph(MessagesState)
+workflow.add_node("supervisor", supervisor_agent)
+workflow.add_node("elastic_agent", elastic_agent)
+workflow.add_node("sql_agent", sql_agent)
 
-# Set edges
-builder.add_edge(START, "supervisor")
-builder.add_edge("elastic_agent", "supervisor")
-builder.add_edge("sql_agent", "supervisor")
-
-# Set termination point
-builder.add_edge("supervisor", END)
-
-# Conditional edges
-builder.add_conditional_edges(
+# Define edges
+workflow.add_edge(START, "supervisor")
+workflow.add_edge("elastic_agent", "supervisor")
+workflow.add_edge("sql_agent", "supervisor")
+workflow.add_conditional_edges(
     "supervisor",
-    lambda state: state.next_node,
-    {
-        "elastic_agent": "elastic_agent",
-        "sql_agent": "sql_agent",
-        "END": END
-    }
+    lambda x: END if "messages" in x and len(x["messages"]) > 5 else "supervisor"
 )
 
-# Set the entry point
-builder.set_entry_point("supervisor")
+# Compile
+app = workflow.compile()
 
-multi_agent = builder.compile()
-
-# ================== Example Usage ==================
+# ========================
+# 7. Execution Example
+# ========================
 def run_query(query: str):
-    """Helper function to run a query through the multi-agent system"""
-    print(f"\nUser: {query}")
-    initial_state = AgentState({
-        "messages": [HumanMessage(content=query)],
-        "next_node": None
+    response = app.invoke({
+        "messages": [HumanMessage(content=query)]
     })
     
-    result = multi_agent.invoke(initial_state)
-    
-    if result.get("messages") and len(result["messages"]) > 0:
-        last_message = result["messages"][-1]
-        if hasattr(last_message, 'content'):
-            print(f"Assistant: {last_message.content}")
-        else:
-            print("Assistant: (No content in message)")
-    else:
-        print("Assistant: No response generated")
+    print("\n=== FINAL RESPONSE ===")
+    for msg in response["messages"]:
+        if msg["role"] in ["user", "assistant"]:
+            print(f"{msg['role'].upper()}: {msg['content']}")
 
-if __name__ == "__main__":
-    # Test with sample queries
-    test_queries = [
-        "List all Elasticsearch indices",
-        "Show me the mapping for the 'logs' index",
-        "Search for documents in 'products' index where price is greater than 100",
-        "How many tables are in the database?",
-        "What are the columns in the 'customers' table?",
-        "Find products with names containing 'laptop'"
-    ]
-    
-    for query in test_queries:
-        run_query(query)
+# Example queries
+run_query("Get total sales from SQL database and top 5 products from Elasticsearch")
+run_query("Show me the schema of the SQL database and list all Elasticsearch indices")
