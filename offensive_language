@@ -355,3 +355,172 @@ test_cases = [
 for text, lang_code in test_cases:
     result = format_output(text, lang_code)
     print(result)
+
+
+
+*****************************
+****************************
+**************************
+
+test_cases = [
+    # English (10)
+    ("Welcome", "en"),
+    ("Thanks for your help", "en"),
+    ("Go to hell", "en"),
+    ("Piece of shit", "en"),
+    ("I appreciate you", "en"),
+    ("You're worthless", "en"),
+    ("Have a nice day", "en"),
+    ("F*** off", "en"),
+    ("Brilliant work", "en"),
+    ("Kiss my ass", "en"),
+
+    # Spanish (10)
+    ("Gracias", "es"),
+    ("Eres tonto", "es"),
+    ("Buenos días", "es"),
+    ("Hijo de puta", "es"),
+    ("Te quiero", "es"),
+    ("Vete al diablo", "es"),
+    ("Excelente trabajo", "es"),
+    ("Estúpido", "es"),
+    ("Por favor", "es"),
+    ("Maldito idiota", "es"),
+
+    # French (10)
+    ("Merci", "fr"),
+    ("Salaud", "fr"),
+    ("Bon appétit", "fr"),
+    ("Va te faire voir", "fr"),
+    ("Je t'aime", "fr"),
+    ("Connasse", "fr"),
+    ("Pardon", "fr"),
+    ("Fils de pute", "fr"),
+    ("Magnifique", "fr"),
+    ("Putain", "fr"),
+
+    # German (10)
+    ("Danke", "de"),
+    ("Arschloch", "de"),
+    ("Guten Appetit", "de"),
+    ("Halt die Klappe", "de"),
+    ("Ich liebe dich", "de"),
+    ("Scheiße", "de"),
+    ("Bitte", "de"),
+    ("Wichser", "de"),
+    ("Fantastisch", "de"),
+    ("Vollidiot", "de"),
+
+    # Asian Languages (30)
+    # Japanese (5)
+    ("ありがとう", "ja"),
+    ("バカ", "ja"),
+    ("おはよう", "ja"),
+    ("クソ野郎", "ja"),
+    ("愛してる", "ja"),
+
+    # Chinese (5)
+    ("谢谢", "zh"),
+    ("笨蛋", "zh"),
+    ("早上好", "zh"),
+    ("他妈的", "zh"),
+    ("我爱你", "zh"),
+
+    # Korean (5)
+    ("감사합니다", "ko"),
+    ("바보", "ko"),
+    ("안녕하세요", "ko"),
+    ("씨발", "ko"),
+    ("사랑해", "ko"),
+
+    # Hindi (5)
+    ("धन्यवाद", "hi"),
+    ("मूर्ख", "hi"),
+    ("सुप्रभात", "hi"),
+    ("चूतिया", "hi"),
+    ("प्यार", "hi"),
+
+    # Thai (5)
+    ("ขอบคุณ", "th"),
+    ("โง่", "th"),
+    ("สวัสดี", "th"),
+    ("ไอ้โง่", "th"),
+    ("รัก", "th"),
+
+    # Vietnamese (5)
+    ("Cảm ơn", "vi"),
+    ("Đồ ngốc", "vi"),
+    ("Xin chào", "vi"),
+    ("Địt mẹ", "vi"),
+    ("Yêu", "vi"),
+
+    # Middle Eastern (15)
+    # Arabic (5)
+    ("شكرا", "ar"),
+    ("أحمق", "ar"),
+    ("صباح الخير", "ar"),
+    ("ابن الكلب", "ar"),
+    ("أحبك", "ar"),
+
+    # Hebrew (5)
+    ("תודה", "he"),
+    ("אידיוט", "he"),
+    ("בוקר טוב", "he"),
+    ("בן זונה", "he"),
+    ("אני אוהב אותך", "he"),
+
+    # Turkish (5)
+    ("Teşekkürler", "tr"),
+    ("Aptal", "tr"),
+    ("Günaydın", "tr"),
+    ("Orospu çocuğu", "tr"),
+    ("Seni seviyorum", "tr"),
+
+    # European (25)
+    # Italian (5)
+    ("Grazie", "it"),
+    ("Stupido", "it"),
+    ("Buongiorno", "it"),
+    ("Figlio di puttana", "it"),
+    ("Ti amo", "it"),
+
+    # Portuguese (5)
+    ("Obrigado", "pt"),
+    ("Idiota", "pt"),
+    ("Bom dia", "pt"),
+    ("Filho da puta", "pt"),
+    ("Amo-te", "pt"),
+
+    # Russian (5)
+    ("Спасибо", "ru"),
+    ("Идиот", "ru"),
+    ("Доброе утро", "ru"),
+    ("Сукин сын", "ru"),
+    ("Я тебя люблю", "ru"),
+
+    # Dutch (5)
+    ("Dank je", "nl"),
+    ("Idioot", "nl"),
+    ("Goedemorgen", "nl"),
+    ("Klootzak", "nl"),
+    ("Ik hou van je", "nl"),
+
+    # Polish (5)
+    ("Dziękuję", "pl"),
+    ("Idiota", "pl"),
+    ("Dzień dobry", "pl"),
+    ("Sukinsyn", "pl"),
+    ("Kocham cię", "pl"),
+
+    # Edge Cases (10)
+    ("", "en"),  # Empty string
+    (" ", "es"),  # Whitespace
+    ("12345", "fr"),  # Numbers
+    ("@#$%^", "de"),  # Symbols
+    ("Hello 你好", "zh"),  # Mixed languages
+    ("Café", "pt"),  # Accented characters
+    ("🤬", "ja"),  # Emoji
+    ("I'm not angry", "en"),  # Negative phrasing
+    ("This is a long sentence that should pass normally without issues", "en"),
+    ("你 好", "zh")  # Space between characters
+]
