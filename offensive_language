@@ -173,3 +173,185 @@ for text, lang, expected_flag, expected_msg in test_cases:
     output = f"{text}|{lang}|{'T' if is_normal else 'F'}|{offense_msg}"
     assert output == f"{text}|{lang}|{expected_flag}|{expected_msg}", f"Test failed: {text}"
     print(output)
+
+
+
++++++++++++++++++++++++++++++++
++++++++++++++++++++++++++++++
+from openai import AzureOpenAI
+
+# Initialize Azure OpenAI client
+client = AzureOpenAI(
+    api_key="your-api-key",
+    api_version="2023-05-15",
+    azure_endpoint="your-endpoint"
+)
+
+def get_detection_prompt(text):
+    return f"""
+    Analyze this text for offensive content in any language.
+    Return ONLY 'True' (normal) or 'False' (offensive).
+    Consider: profanity, hate speech, threats, sexual content.
+    
+    Examples:
+    - "Hello" → True
+    - "F*** you" → False
+    - "Idiota" → False
+    
+    Text: "{text}"
+    """
+
+def detect_offensive_language(text):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a strict multilingual content moderator. Respond ONLY with 'True' or 'False'."},
+                {"role": "user", "content": get_detection_prompt(text)}
+            ],
+            temperature=0.0,
+            max_tokens=10
+        )
+        return response.choices[0].message.content.strip() == "True"
+    except Exception as e:
+        print(f"Error: {e}")
+        return True  # Fail-safe
+
+def get_localized_message(lang_code):
+    return {
+        "en": "Inappropriate language",
+        "es": "Lenguaje inapropiado",
+        "fr": "Langage inapproprié",
+        "de": "Unangemessene Sprache",
+        "it": "Linguaggio inappropriato",
+        "pt": "Linguagem inadequada",
+        "ru": "Недопустимый язык",
+        "zh": "不适当的语言",
+        "ja": "不適切な言語",
+        "ar": "لغة غير لائقة",
+        "hi": "अनुचित भाषा",
+        "ko": "부적절한 언어",
+        "th": "ภาษาที่ไม่เหมาะสม",
+        "vi": "Ngôn ngữ không phù hợp",
+        "nl": "Ongepaste taal",
+        "sv": "Olämpligt språk",
+        "fi": "Sopimaton kieli",
+        "da": "Upassende sprog",
+        "no": "Upassende språk",
+        "pl": "Niewłaściwy język",
+        "tr": "Uygunsuz dil",
+        "he": "שפה לא הולמת",
+        "id": "Bahasa tidak pantas",
+        "ms": "Bahasa tidak sesuai",
+        "tl": "Hindi angkop na wika",
+        "hu": "Nem megfelelő nyelv",
+        "cs": "Nevhodný jazyk",
+        "el": "Ακατάλληλη γλώσσα",
+        "ro": "Limbaj inadecvat",
+        "sk": "Nevhodný jazyk",
+        "bg": "Неприличен език",
+        "uk": "Неприйнятна мова",
+        "fa": "زبان نامناسب",
+        "ur": "نامناسب زبان",
+        "bn": "অনুপযুক্ত ভাষা",
+        "ta": "பொருத்தமற்ற மொழி",
+        "te": "తగని భాష",
+        "mr": "अयोग्य भाषा",
+        "gu": "અયોગ્ય ભાષા",
+        "kn": "ಅನುಚಿತ ಭಾಷೆ",
+        "ml": "അനുചിതമായ ഭാഷ",
+        "pa": "ਗ਼ਲਤ ਭਾਸ਼ਾ",
+        "ne": "अनुचित भाषा",
+        "si": "නුසුදුසු භාෂාව",
+        "km": "ភាសាមិនសមរម្យ",
+        "my": "မသင့်လျော်သောဘာသာစကား",
+        "lo": "ພາສາທີ່ບໍ່ເໝາະສົມ",
+        "jw": "Basa sing ora pantes",
+        "su": "Basa teu pantes",
+        "yo": "Ede ti o ye",
+        "ig": "Asụsụ na-ekwesịghị ekwesị",
+        "zu": "Ulimi olungafanele",
+        "xh": "Ulwimi olungafanelekanga",
+        "sn": "Mutauro usingakodzeri",
+        "st": "Puo e sa loketseng",
+        "sw": "Lugha isiyofaa",
+        "am": "የማይገባ ቋንቋ",
+        "ha": "Harshen da bai dace ba",
+        "so": "Afka aan habboon",
+        "af": "Onvanpaste taal",
+        "az": "Uyğunsuz dil",
+        "be": "Неадпаведная мова",
+        "ca": "Llenguatge inadequat",
+        "cy": "Iaith amhriodol",
+        "et": "Sobimatu keel",
+        "eu": "Hizkuntza desegokia",
+        "gl": "Linguaxe inadecuada",
+        "hr": "Neprikladan jezik",
+        "hy": "Հարմար չէ լեզու",
+        "is": "Óviðeigandi tungumál",
+        "ka": "არაშესაბამისი ენა",
+        "kk": "Қолайсыз тіл",
+        "ky": "Ылайыксыз тил",
+        "lt": "Netinkama kalba",
+        "lv": "Nepiemērota valoda",
+        "mk": "Несоодветен јазик",
+        "mn": "Тохиромжтой бус хэл",
+        "mt": "Lingwa mhux xierqa",
+        "sl": "Neprimeren jezik",
+        "sq": "Gjuhë e papërshtatshme",
+        "sr": "Неприкладан језик",
+        "tg": "Забони номуносиб",
+        "tk": "Nädogry dil",
+        "uz": "Noo'rin til",
+    }.get(lang_code, "Inappropriate language")
+
+def format_output(text, lang_code="en"):
+    is_normal = detect_offensive_language(text)
+    msg = "" if is_normal else get_localized_message(lang_code)
+    return f"{text}|{lang_code}|{'T' if is_normal else 'F'}|{msg}"
+
+# Test cases - Now only need (text, lang_code)
+test_cases = [
+    # English
+    ("Hello", "en"),
+    ("You're an idiot", "en"),
+    
+    # Spanish
+    ("Hola", "es"),
+    ("Eres estúpido", "es"),
+    
+    # French
+    ("Bonjour", "fr"),
+    ("Connard", "fr"),
+    
+    # German
+    ("Guten Tag", "de"),
+    ("Dummkopf", "de"),
+    
+    # Japanese
+    ("こんにちは", "ja"),
+    ("バカ", "ja"),
+    
+    # Russian
+    ("Привет", "ru"),
+    ("Идиот", "ru"),
+    
+    # Arabic
+    ("مرحبا", "ar"),
+    ("أحمق", "ar"),
+    
+    # Hindi
+    ("नमस्ते", "hi"),
+    ("बेवकूफ", "hi"),
+    
+    # Chinese
+    ("你好", "zh"),
+    ("笨蛋", "zh"),
+    
+    # ... Add 90+ more test cases
+]
+
+# Automated testing
+for text, lang_code in test_cases:
+    result = format_output(text, lang_code)
+    print(result)
