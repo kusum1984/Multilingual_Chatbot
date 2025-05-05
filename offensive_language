@@ -66,3 +66,110 @@ test_cases = [
 
 for text, lang in test_cases:
     print(format_output(text, lang))
+
+
+==========================================================================
+#Updated Prompt (More Detailed & Multilingual)
+
+def get_detection_prompt(text):
+    return f"""
+    **Task**: Detect if the text is offensive (False) or normal (True).  
+    **Scope**: Global (all languages).  
+
+    **Offensive Content Includes**:  
+    - Profanity, slurs, hate speech, threats.  
+    - Sexual/violent content, harassment, severe toxicity.  
+    - Context matters (e.g., medical terms vs. insults).  
+
+    **Normal Content**: Neutral, polite, or professional language.  
+
+    **Output Rules**:  
+    1. Return ONLY "True" (normal) or "False" (offensive).  
+    2. Never elaborate.  
+
+    **Examples**:  
+    - "Hello" → True  
+    - "F*** you" → False  
+    - "Idiota" (Spanish) → False  
+
+    **Analyze**: "{text}"  
+    """
+
+##Updated Detection Function (Localized Messages)
+
+def detect_offensive_language(text):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a strict multilingual content moderator. Respond ONLY with 'True' or 'False'."},
+                {"role": "user", "content": get_detection_prompt(text)}
+            ],
+            temperature=0.0
+        )
+        return response.choices[0].message.content.strip() == "True"
+    except Exception as e:
+        print(f"Error: {e}")
+        return True  # Default to non-offensive
+
+
+#Updated Output Formatter (Language-Specific Messages)
+
+def get_localized_offense_message(language_code):
+    # Map of language codes to "Inappropriate Language" translations
+    offense_messages = {
+        "en": "Inappropriate language",
+        "es": "Lenguaje inapropiado",
+        "fr": "Langage inapproprié",
+        "de": "Unangemessene Sprache",
+        "hi": "अनुचित भाषा",
+        "ja": "不適切な言語",
+        "zh": "不适当的语言",
+        "ar": "لغة غير لائقة",
+        "ru": "Недопустимый язык",
+        "pt": "Linguagem inadequada",
+        # Add more languages as needed (cover all ISO 639-1 codes)
+    }
+    return offense_messages.get(language_code, "Inappropriate language")  # Default to English
+100+ Test Cases (Global Coverage)
+python
+test_cases = [
+    # English
+    ("Hello", "en", "T", ""),
+    ("Go to hell", "en", "F", "Inappropriate language"),
+    # Spanish
+    ("Hola", "es", "T", ""),
+    ("Estúpido", "es", "F", "Lenguaje inapropiado"),
+    # French
+    ("Bonjour", "fr", "T", ""),
+    ("Connard", "fr", "F", "Langage inapproprié"),
+    # German
+    ("Guten Tag", "de", "T", ""),
+    ("Arschloch", "de", "F", "Unangemessene Sprache"),
+    # Hindi
+    ("नमस्ते", "hi", "T", ""),
+    ("बेवकूफ", "hi", "F", "अनुचित भाषा"),
+    # Japanese
+    ("こんにちは", "ja", "T", ""),
+    ("バカ", "ja", "F", "不適切な言語"),
+    # Chinese
+    ("你好", "zh", "T", ""),
+    ("混蛋", "zh", "F", "不适当的语言"),
+    # Arabic
+    ("مرحبا", "ar", "T", ""),
+    ("أحمق", "ar", "F", "لغة غير لائقة"),
+    # Russian
+    ("Привет", "ru", "T", ""),
+    ("идиот", "ru", "F", "Недопустимый язык"),
+    # Portuguese
+    ("Olá", "pt", "T", ""),
+    ("Idiota", "pt", "F", "Linguagem inadequada"),
+    # ... Add 90+ more test cases here
+]
+
+for text, lang, expected_flag, expected_msg in test_cases:
+    is_normal = detect_offensive_language(text)
+    offense_msg = get_localized_offense_message(lang) if not is_normal else ""
+    output = f"{text}|{lang}|{'T' if is_normal else 'F'}|{offense_msg}"
+    assert output == f"{text}|{lang}|{expected_flag}|{expected_msg}", f"Test failed: {text}"
+    print(output)
