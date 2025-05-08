@@ -1,3 +1,82 @@
+from typing import List, Dict, Any
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
+
+# Follow-up Question Agent
+def create_followup_agent():
+    # Define the follow-up question prompt
+    followup_prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a follow-up question specialist. Your task is to:
+1. Analyze the conversation history
+2. Identify areas that need clarification or deeper exploration
+3. Generate 1-3 relevant follow-up questions that would help better understand the topic
+
+Guidelines:
+- Only ask questions that are directly relevant to the current conversation
+- Make questions specific and answerable
+- Don't repeat questions that have already been answered
+- Prioritize questions that would provide the most valuable additional information"""),
+        MessagesPlaceholder(variable_name="messages")
+    ])
+    
+    # Create the follow-up question generator
+    followup_chain = followup_prompt | cfg.llm
+    
+    def extract_followups(messages: List[Dict[str, Any]]) -> List[str]:
+        # Get the last AI message
+        last_ai_msg = next((msg for msg in reversed(messages) if msg["role"] == "assistant", None)
+        if not last_ai_msg:
+            return []
+        
+        # Generate follow-up questions
+        response = followup_chain.invoke({"messages": messages})
+        content = response.content if hasattr(response, "content") else response
+        
+        # Parse the response to extract questions
+        questions = []
+        if isinstance(content, str):
+            # Split by newlines and remove empty lines
+            lines = [line.strip() for line in content.split("\n") if line.strip()]
+            # Filter for lines that look like questions
+            questions = [line for line in lines if line.endswith("?")]
+        
+        return questions[:3]  # Return max 3 follow-ups
+    
+    return RunnableLambda(extract_followups)
+
+# Add to your supervisor setup
+followup_agent = create_followup_agent()
+
+# Modified supervisor with follow-up capability
+supervisor = create_supervisor(
+    model=init_chat_model("openai:gpt-4.1"),
+    agents=[research_agent, math_agent, followup_agent],
+    prompt=(
+        "You are a supervisor managing three agents:\n"
+        "- a research agent. Assign research-related tasks to this agent\n"
+        "- a math agent. Assign math-related tasks to this agent\n"
+        "- a follow-up agent. Use this when you need to generate relevant follow-up questions\n"
+        "Assign work to one agent at a time, do not call agents in parallel.\n"
+        "Do not do any work yourself."
+    ),
+    add_handoff_back_messages=True,
+    output_mode="full_history",
+).compile()
+
+# Example usage with conversation history
+conversation_history = [
+    {"role": "user", "content": "Who is the mayor of NYC?"},
+    {"role": "assistant", "content": "The current mayor of New York City is Eric Adams."}
+]
+
+# Generate follow-up questions
+followups = followup_agent.invoke({"messages": conversation_history})
+print("Suggested follow-up questions:")
+for i, question in enumerate(followups, 1):
+    print(f"{i}. {question}")
+***************
+
 # Import statements grouped by functionality
 import json
 import os
