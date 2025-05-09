@@ -1,4 +1,111 @@
 from langchain_community.document_loaders import PandasExcelLoader
+from langchain_community.vectorstores import FAISS
+from langchain_community.agent_toolkits import create_pandas_dataframe_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import Tool
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.chains import RetrievalQA
+
+class ExcelKnowledgeBase:
+    def __init__(self):
+        self.semantic_search = None
+        self.structured_query = None
+        self.load_knowledge_base()
+
+    def load_knowledge_base(self):
+        """Initialize both semantic and structured Excel tools"""
+        try:
+            # 1. Load Excel file with all sheets
+            loader = PandasExcelLoader("knowledge_base.xlsx")
+            sheets = loader.load()
+            
+            # 2. Setup Semantic Search
+            documents = []
+            for sheet in sheets:
+                content = f"Sheet: {sheet['name']}\nColumns: {', '.join(sheet['dataframe'].columns)}\n"
+                content += sheet['dataframe'].to_markdown(index=False)
+                documents.append(Document(
+                    page_content=content,
+                    metadata={"source": sheet['name']}
+                ))
+            
+            splits = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200
+            ).split_documents(documents)
+            
+            vectorstore = FAISS.from_documents(splits, OpenAIEmbeddings())
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            
+            self.semantic_search = RetrievalQA.from_chain_type(
+                llm=cfg.llm,
+                chain_type="stuff",
+                retriever=retriever
+            )
+            
+            # 3. Setup Structured Query
+            dfs = [sheet['dataframe'] for sheet in sheets]
+            self.structured_query = create_pandas_dataframe_agent(
+                llm=cfg.llm,
+                df=dfs,
+                verbose=cfg.langchain_verbose
+            )
+            
+        except Exception as e:
+            print(f"Error loading Excel knowledge base: {e}")
+
+# Initialize knowledge base
+excel_kb = ExcelKnowledgeBase()
+
+# Define Tools
+excel_tools = [
+    Tool(
+        name="excel_semantic",
+        func=lambda q: excel_kb.semantic_search.run(q),
+        description="""Use for conceptual questions about:
+- Company policies
+- Process documentation
+- General knowledge in Excel files"""
+    ),
+    Tool(
+        name="excel_structured",
+        func=lambda q: excel_kb.structured_query.run(q),
+        description="""Use for precise data queries:
+- Employee records
+- Financial figures
+- Metrics and calculations"""
+    )
+]
+
+# Add to your existing agent creation
+research_agent = create_react_agent(
+    model="openai:gpt-4.1",
+    tools=[*excel_tools, web_search],  # Combine with existing tools
+    prompt=(
+        "You are a research assistant with Excel knowledge.\n"
+        "First check if the question relates to internal documentation.\n"
+        "If yes, use excel_semantic or excel_structured as appropriate.\n"
+        "Only use web search for external information."
+    ),
+    name="research_agent"
+)
+
+# Update supervisor prompt
+supervisor_prompt = """You manage these specialized agents:
+1. excel_agent - Internal company knowledge (preferred for internal questions)
+2. research_agent - General research (uses Excel tools when applicable)
+3. math_agent - Calculations
+
+Decision Flow:
+1. Is this about company internal data? → excel_semantic/excel_structured
+2. Is this a calculation? → math_agent
+3. Else → research_agent
+
+Current query: {input}"""
+
++++++++++++++++++++
+from langchain_community.document_loaders import PandasExcelLoader
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_community.vectorstores import FAISS
 from langchain_core.tools import Tool
