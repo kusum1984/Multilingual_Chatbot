@@ -1,3 +1,133 @@
+from langchain_community.document_loaders import PandasExcelLoader
+from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
+from langchain_community.vectorstores import FAISS
+from langchain_core.tools import Tool
+from langchain.chains import RetrievalQA
+
+class Config:
+    def __init__(self):
+        # ... (keep existing config)
+        
+        # Enhanced Excel Knowledge Base Setup
+        self.excel_retriever = None
+        self.excel_qa_chain = None
+        self.excel_agent = None
+        self.setup_excel_knowledgebase()
+
+    def setup_excel_knowledgebase(self):
+        """Set up structured Excel knowledge base using Pandas"""
+        try:
+            # 1. Load Excel file with sheet awareness
+            excel_path = "knowledge_base.xlsx"
+            loader = PandasExcelLoader(excel_path)
+            sheets = loader.load()
+            
+            # 2. Process each sheet
+            all_dfs = []
+            documents = []
+            
+            for sheet in sheets:
+                df = sheet['dataframe']
+                all_dfs.append(df)
+                
+                # Create documents for semantic search
+                for column in df.columns:
+                    for idx, value in df[column].items():
+                        doc = Document(
+                            page_content=f"Sheet: {sheet['name']} | Column: {column} | Value: {value}",
+                            metadata={
+                                "sheet": sheet['name'],
+                                "column": column,
+                                "row": idx
+                            }
+                        )
+                        documents.append(doc)
+            
+            # 3. Create vector store for semantic search
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200
+            )
+            splits = text_splitter.split_documents(documents)
+            
+            embeddings = OpenAIEmbeddings()
+            vectorstore = FAISS.from_documents(splits, embeddings)
+            self.excel_retriever = vectorstore.as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": 3, "fetch_k": 10}
+            )
+            
+            # 4. Create QA chain
+            self.excel_qa_chain = RetrievalQA.from_chain_type(
+                llm=cfg.llm,
+                chain_type="stuff",
+                retriever=self.excel_retriever,
+                verbose=cfg.langchain_verbose
+            )
+            
+            # 5. Create multi-sheet pandas agent
+            self.excel_agent = create_pandas_dataframe_agent(
+                cfg.llm,
+                all_dfs,
+                verbose=cfg.langchain_verbose,
+                prefix="""You are an Excel data expert. Analyze questions and:
+- Identify which sheet contains relevant data
+- Use appropriate columns
+- Return precise information
+- Format tables clearly"""
+            )
+
+        except Exception as e:
+            print(f"Error setting up Excel knowledge base: {e}")
+
+# Enhanced Excel Tools
+def query_excel_semantic(question: str) -> str:
+    """Search conceptual information across all sheets"""
+    try:
+        result = cfg.excel_qa_chain.invoke({"query": question})
+        return result["result"]
+    except Exception as e:
+        return f"Semantic search error: {str(e)}"
+
+def query_excel_structured(question: str) -> str:
+    """Query specific tables/values"""
+    try:
+        return cfg.excel_agent.run(question)
+    except Exception as e:
+        return f"Structured query error: {str(e)}"
+
+# Create Excel Tools
+excel_tools = [
+    Tool(
+        name="excel_concept_search",
+        func=query_excel_semantic,
+        description="Search conceptual information across all Excel sheets"
+    ),
+    Tool(
+        name="excel_data_query",
+        func=query_excel_structured,
+        description="Query specific tables, rows or columns in Excel sheets"
+    )
+]
+
+# Enhanced Excel Agent
+excel_agent = create_react_agent(
+    model="openai:gpt-4.1",
+    tools=excel_tools,
+    prompt=(
+        "You are an Excel knowledge specialist with access to:\n"
+        "1. Conceptual search (excel_concept_search)\n"
+        "2. Structured data queries (excel_data_query)\n\n"
+        "RULES:\n"
+        "- First determine if question needs conceptual or precise data\n"
+        "- For 'find all' or 'search about' → excel_concept_search\n"
+        "- For 'how many', 'list all', or specific values → excel_data_query\n"
+        "- Always cite sheet names in responses"
+    ),
+    name="excel_agent"
+)
+=======================
+
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
