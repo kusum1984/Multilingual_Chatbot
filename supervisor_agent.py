@@ -1,4 +1,55 @@
-from typing import List, Dict, Any
+from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
+
+# Define follow-up question tool
+def generate_followups(conversation_history: str) -> str:
+    """Generate relevant follow-up questions based on conversation history"""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a follow-up question generator. Analyze the conversation and suggest 1-3 relevant follow-up questions.
+        
+        Rules:
+        - Only ask questions directly related to the current topic
+        - Make questions specific and answerable
+        - Don't repeat questions already answered
+        - Format as a numbered list"""),
+        ("human", "{conversation_history}")
+    ])
+    
+    chain = prompt | cfg.llm
+    response = chain.invoke({"conversation_history": conversation_history})
+    return response.content if hasattr(response, "content") else response
+
+# Create follow-up agent
+followup_agent = create_react_agent(
+    model="openai:gpt-4.1",
+    tools=[generate_followups],
+    prompt=(
+        "You are a follow-up question agent.\n\n"
+        "INSTRUCTIONS:\n"
+        "- Analyze the conversation history and generate relevant follow-up questions\n"
+        "- Only suggest questions that would provide valuable additional information\n"
+        "- Return exactly 1-3 questions as a numbered list\n"
+        "- Respond ONLY with the questions, do NOT include ANY other text."
+    ),
+    name="followup_agent",
+)
+
+# Example usage
+conversation_history = [
+    {"role": "user", "content": "Who is the mayor of NYC?"},
+    {"role": "assistant", "content": "The current mayor of New York City is Eric Adams."}
+]
+
+# Run the agent
+for chunk in followup_agent.stream(
+    {"messages": [{"role": "user", "content": str(conversation_history)}]}
+):
+    pretty_print_messages(chunk)
+    
+ #######################################################   
+    
+    from typing import List, Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
