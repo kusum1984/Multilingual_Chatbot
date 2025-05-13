@@ -5,6 +5,101 @@ from typing import Dict, Any
 import json
 import os
 from openai import AzureOpenAI
+from dotenv import load_dotenv
+
+class ManufacturingRCAAnalyzer:
+    def __init__(self, azure_openai_client):
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        
+    # [Previous methods remain the same until _extract_case_details]
+    
+    def _extract_case_details(self, case_text: str) -> Dict[str, Any]:
+        """Use Azure OpenAI to extract structured details from case text"""
+        prompt = f"""
+        Analyze this manufacturing CAPA case and extract relevant details as a valid JSON object:
+        
+        {case_text}
+        
+        Return ONLY a valid JSON object with these exact fields:
+        {{
+            "document_version_issue": bool,
+            "bom_accurate": bool,
+            "setup_sheet_accurate": bool,
+            "visual_aid_accurate": bool,
+            "operator_trained": bool,
+            "part_verification_done": bool,
+            "line_stopped_correctly": bool,
+            "correct_part_used": bool,
+            "production_impact": int,
+            "root_cause_hypothesis": str
+        }}
+        """
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                response_format={"type": "json_object"}  # Ensure JSON response
+            )
+            
+            # Extract the content and validate JSON
+            json_str = response.choices[0].message.content
+            if not json_str.strip():
+                raise ValueError("Empty response from Azure OpenAI")
+                
+            return json.loads(json_str)
+            
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON: {e}")
+            print(f"Response content: {json_str}")
+            raise
+        except Exception as e:
+            print(f"Error calling Azure OpenAI: {e}")
+            raise
+
+    # [Rest of the class remains the same]
+
+def initialize_azure_client():
+    """Initialize and return Azure OpenAI client"""
+    load_dotenv()  # Load environment variables
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-05-15"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+
+if __name__ == "__main__":
+    try:
+        client = initialize_azure_client()
+        analyzer = ManufacturingRCAAnalyzer(client)
+        
+        case_text = """
+        On Jan 12, 2021, the MESE1 Manufacturing Line at External Manufacturer Jabil was stopped by AUH (Auburn Hills) Manufacturing due to discrepancy between the mechanical assembly Visual Aids and the Setup Sheet, resulting in incorrect screw P/N used at MESE1-12-G Build Station 4. It was found that Step 13 of work instruction OPER-WI-086 Rev C states to use P/N 5600203-01 to secure the filter Canister Bracket to the Chasis. P/N 5600008-03 was used instead. The BOM and setup Sheet have the correct P/N for assembly, but the AUH Work Instruction Visual Aid rev 003 references the incorrect 5600008-03. EES was notified on Jan 14, 2021.
+        """
+        
+        results = analyzer.analyze_case(case_text)
+        print("Root Cause Analysis Results:")
+        print(json.dumps(results, indent=2))
+        
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
+
+
+************
+****************************
+*********************************
+
+
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
+from typing import Dict, Any
+import json
+import os
+from openai import AzureOpenAI
 
 class ManufacturingRCAAnalyzer:
     def __init__(self, azure_openai_client):
