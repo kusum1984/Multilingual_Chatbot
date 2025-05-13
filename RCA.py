@@ -1,0 +1,151 @@
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
+from typing import Dict, Any
+import openai  # or your preferred LLM provider
+
+class ManufacturingRCAAnalyzer:
+    def __init__(self):
+        # Initialize with common manufacturing causal knowledge
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        
+    def _build_common_causal_graph(self) -> nx.DiGraph:
+        """Build a base causal graph for manufacturing issues"""
+        causal_graph = nx.DiGraph([
+            # Document-related factors
+            ('Document Version Control', 'Work Instruction Accuracy'),
+            ('BOM Accuracy', 'Work Instruction Accuracy'),
+            ('Setup Sheet Accuracy', 'Work Instruction Accuracy'),
+            ('Visual Aid Accuracy', 'Work Instruction Accuracy'),
+            
+            # Process-related factors
+            ('Operator Training', 'Correct Part Usage'),
+            ('Work Instruction Accuracy', 'Correct Part Usage'),
+            ('Part Verification Process', 'Correct Part Usage'),
+            ('Line Stoppage Protocol', 'Production Impact'),
+            
+            # Outcome
+            ('Correct Part Usage', 'Production Impact'),
+            ('Work Instruction Accuracy', 'Production Impact')
+        ])
+        return causal_graph
+    
+    def _generate_synthetic_data(self, case_details: Dict[str, Any]) -> pd.DataFrame:
+        """Generate synthetic data based on case details for analysis"""
+        # This would be enhanced with real data in production
+        data = {
+            'Document Version Control': [case_details.get('document_version_issue', 0)],
+            'BOM Accuracy': [case_details.get('bom_accurate', 1)],
+            'Setup Sheet Accuracy': [case_details.get('setup_sheet_accurate', 1)],
+            'Visual Aid Accuracy': [case_details.get('visual_aid_accurate', 0)],
+            'Operator Training': [case_details.get('operator_trained', 1)],
+            'Part Verification Process': [case_details.get('part_verification_done', 0)],
+            'Line Stoppage Protocol': [case_details.get('line_stopped_correctly', 1)],
+            'Correct Part Usage': [case_details.get('correct_part_used', 0)],
+            'Production Impact': [case_details.get('production_impact', 1)]
+        }
+        return pd.DataFrame(data)
+    
+    def _extract_case_details(self, case_text: str) -> Dict[str, Any]:
+        """Use LLM to extract structured details from case text"""
+        prompt = f"""
+        Analyze this manufacturing CAPA case and extract relevant details in JSON format:
+        
+        {case_text}
+        
+        Return JSON with these fields:
+        - document_version_issue (bool): Was there a document version control issue?
+        - bom_accurate (bool): Was the BOM accurate?
+        - setup_sheet_accurate (bool): Was the setup sheet accurate?
+        - visual_aid_accurate (bool): Was the visual aid accurate?
+        - operator_trained (bool): Was the operator properly trained?
+        - part_verification_done (bool): Was part verification performed?
+        - line_stopped_correctly (bool): Was the line stopped correctly when issue found?
+        - correct_part_used (bool): Was the correct part used?
+        - production_impact (int): Severity of production impact (0-10)
+        - root_cause_hypothesis (str): Initial hypothesis of root cause
+        """
+        
+        # Call to LLM (pseudo-code - implement with your preferred LLM API)
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        
+        return json.loads(response.choices[0].message.content)
+    
+    def analyze_case(self, case_text: str) -> Dict[str, Any]:
+        """End-to-end analysis of a manufacturing case"""
+        # Step 1: Extract structured data from case text using LLM
+        case_details = self._extract_case_details(case_text)
+        
+        # Step 2: Generate synthetic data based on case details
+        data = self._generate_synthetic_data(case_details)
+        
+        # Step 3: Fit the causal model
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        gcm.fit(self.scm, data)
+        
+        # Step 4: Perform root cause analysis
+        attributions = gcm.attribute_anomalies(
+            self.scm, 
+            target_node='Production Impact',
+            anomaly_samples=data
+        )
+        
+        # Step 5: Generate recommendations
+        recommendations = self._generate_recommendations(case_details, attributions)
+        
+        return {
+            'case_details': case_details,
+            'causal_attributions': attributions,
+            'recommendations': recommendations
+        }
+    
+    def _generate_recommendations(self, case_details: Dict[str, Any], attributions: Dict[str, Any]) -> str:
+        """Generate actionable recommendations based on analysis"""
+        prompt = f"""
+        Based on this manufacturing case analysis, generate specific CAPA recommendations:
+        
+        Case Details:
+        {json.dumps(case_details, indent=2)}
+        
+        Causal Attributions:
+        {json.dumps({k: float(v[0]) for k, v in attributions.items()}, indent=2)}
+        
+        Provide:
+        1. Root cause confirmation
+        2. Immediate corrective actions
+        3. Preventive actions
+        4. Verification methods
+        5. Test cases to validate the fix
+        """
+        
+        # Call to LLM
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        
+        return response.choices[0].message.content
+
+##Example Usage
+
+
+# Initialize the analyzer
+analyzer = ManufacturingRCAAnalyzer()
+
+# Example case text
+case_text = """
+On Jan 12, 2021, the MESE1 Manufacturing Line at External Manufacturer Jabil was stopped by AUH (Auburn Hills) Manufacturing due to discrepancy between the mechanical assembly Visual Aids and the Setup Sheet, resulting in incorrect screw P/N used at MESE1-12-G Build Station 4. It was found that Step 13 of work instruction OPER-WI-086 Rev C states to use P/N 5600203-01 to secure the filter Canister Bracket to the Chasis. P/N 5600008-03 was used instead. The BOM and setup Sheet have the correct P/N for assembly, but the AUH Work Instruction Visual Aid rev 003 references the incorrect 5600008-03. EES was notified on Jan 14, 2021.
+"""
+
+# Perform analysis
+results = analyzer.analyze_case(case_text)
+
+# Print results
+print("Root Cause Analysis Results:")
+print(json.dumps(results, indent=2))
