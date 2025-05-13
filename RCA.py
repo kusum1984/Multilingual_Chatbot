@@ -1,3 +1,109 @@
+
+
+from typing import Dict, Any
+from dataclasses import dataclass
+from dotenv import load_dotenv
+import openai
+import re
+import pandas as pd
+import dowhy
+from dowhy import CausalModel
+import networkx as nx
+import matplotlib.pyplot as plt
+
+load_dotenv()  # Load OpenAI key from .env
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# === LLM Prompt to extract causes, effects, and graph ===
+def extract_causal_graph(capa_text: str) -> Dict[str, Any]:
+    prompt = f"""
+You are a Root Cause Analysis expert and causal graph analyst. Analyze the CAPA scenario below and perform the following:
+
+1. Identify the key variables (cause, intermediate steps, outcome).
+2. Identify the causal relationships between variables (in plain English).
+3. Represent the causal graph using DoWhy syntax.
+
+CAPA SCENARIO:
+\"\"\"
+{capa_text}
+\"\"\"
+
+Respond ONLY in the following format:
+
+Variables: <list of variables>
+Causal Relationships: <list of plain English cause-effect>
+Graph Syntax: <DoWhy graph as string>
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+
+    output = response['choices'][0]['message']['content']
+    return parse_llm_response(output)
+
+# === Parse LLM output ===
+def parse_llm_response(llm_response: str) -> Dict[str, Any]:
+    variables = re.findall(r"Variables:\s*(.*)", llm_response)
+    relationships = re.findall(r"Causal Relationships:\s*(.*)", llm_response)
+    graph_syntax = re.findall(r"Graph Syntax:\s*([\s\S]*)", llm_response)
+
+    return {
+        "variables": eval(variables[0]) if variables else [],
+        "relationships": relationships[0].split("->") if relationships else [],
+        "graph_syntax": graph_syntax[0].strip() if graph_syntax else ""
+    }
+
+# === Create fake dataframe (since we use description not raw data) ===
+def simulate_data(variables):
+    import numpy as np
+    df = pd.DataFrame(np.random.randint(0, 2, size=(1000, len(variables))), columns=variables)
+    return df
+
+# === Run DoWhy Causal Inference ===
+def perform_root_cause_analysis(capa_text: str):
+    graph_info = extract_causal_graph(capa_text)
+    variables = graph_info["variables"]
+    graph_syntax = graph_info["graph_syntax"]
+
+    df = simulate_data(variables)
+
+    model = CausalModel(
+        data=df,
+        treatment=[v for v in variables if "used" in v.lower() or "referenced" in v.lower()],
+        outcome="line_stopped",  # assuming this is outcome
+        graph=graph_syntax
+    )
+
+    identified_estimand = model.identify_effect()
+    estimate = model.estimate_effect(identified_estimand, method_name="backdoor.propensity_score_matching")
+
+    model.view_model()
+    plt.show()
+
+    return {
+        "root_cause": estimate.value,
+        "causal_graph": graph_syntax,
+        "llm_variables": graph_info["variables"],
+        "llm_relationships": graph_info["relationships"]
+    }
+
+# === Sample Test Case ===
+capa_case = """
+On Jan 12, 2021, the MESE1 Manufacturing Line at External Manufacturer Jabil was stopped by AUH (Auburn Hills) Manufacturing due to a discrepancy between the mechanical assembly Visual Aids and the Setup Sheet, resulting in an incorrect screw P/N used at MESE1-12-G Build Station 4. It was found that Step 13 of work instruction OPER-WI-086 Rev C states to use P/N 5600203-01 to secure the filter Canister Bracket to the Chassis. P/N 5600008-03 was used instead. The BOM and setup Sheet have the correct P/N for assembly, but the AUH Work Instruction Visual Aid rev 003 references the incorrect 5600008-03. EES was notified on Jan 14, 2021.
+"""
+
+# === Run Analysis ===
+result = perform_root_cause_analysis(capa_case)
+print("ROOT CAUSE VALUE (impact):", result["root_cause"])
+print("Graph:\n", result["causal_graph"])
+print("Variables:", result["llm_variables"])
+print("Causal Flow:", result["llm_relationships"])
+
+******************************
+*******************************
+*********************************
 import pandas as pd
 import networkx as nx
 from dowhy import gcm
