@@ -1,3 +1,144 @@
+lear explanation of the manufacturing root cause analysis (RCA) system code:
+
+1. Core Components
+The system has three main parts working together:
+
+Causal Analysis Engine (DoWhy/gcm): Identifies root causes using statistical methods
+
+AI Assistant (Azure OpenAI): Understands case details and generates recommendations
+
+Manufacturing Knowledge Graph: Encodes how different factors affect production
+
+2. How It Works (Step-by-Step)
+Input: User provides a text description of a manufacturing issue
+
+Example: "Workers used wrong part because visual aid was incorrect"
+
+Information Extraction:
+
+python
+def _extract_case_details(self, case_text: str):
+    # Asks AI to extract key facts from the text
+    # Returns structured data like:
+    # {
+    #   "visual_aid_accurate": False,
+    #   "correct_part_used": False,
+    #   "root_cause_hypothesis": "Incorrect visual aid"
+    # }
+Data Preparation:
+
+python
+def _generate_synthetic_data(self, case_details):
+    # Creates realistic manufacturing scenarios based on the case
+    # For example, simulates 100 days of production with:
+    # - 90% correct parts when visual aids are accurate
+    # - 30% correct parts when visual aids are wrong
+Causal Analysis:
+
+python
+gcm.attribute_anomalies(self.scm, target_node='Production_Impact')
+# Measures how much each factor contributed to the problem
+# Example result:
+# {
+#   'Visual_Aid_Accuracy': -0.82,  # Strong negative impact
+#   'Part_Verification': -0.45     # Moderate impact
+# }
+Recommendation Generation:
+
+python
+def _generate_recommendations(self, case_details, attributions):
+    # Asks AI to suggest actions based on the analysis
+    # Returns plain text like:
+    """
+    1. CORRECTIVE: Update all visual aids by 2024-02-01
+    2. PREVENTIVE: Implement visual aid version control
+    """
+3. Key Technical Features
+Manufacturing-Specific Knowledge Graph:
+
+python
+nx.DiGraph([
+    ('Visual_Aid_Accuracy', 'Correct_Part_Usage'),
+    ('Correct_Part_Usage', 'Production_Impact')
+])
+Shows how document errors lead to part issues which affect production
+
+Smart Data Generation:
+
+For binary factors (True/False): Uses binomial distribution
+
+python
+np.random.binomial(1, probability)  # 1=correct, 0=error
+For continuous metrics: Uses normal distribution
+
+python
+np.random.normal(average_impact, variation)
+Error-Resistant Design:
+
+Handles multiple data types (lists, arrays, single values)
+
+python
+float(v[0]) if isinstance(v, (list, np.ndarray)) else float(v)
+Validates AI outputs before processing
+
+4. Example Workflow
+Input Case:
+"Assembly line stopped due to wrong screw being used. Work instruction was correct but visual aid showed wrong part number."
+
+Output:
+
+=== CASE DETAILS ===
+Document Version Issue: No
+BOM Accurate: Yes
+Visual Aid Accurate: No  # <-- Problem identified
+Operator Trained: Yes
+Correct Part Used: No
+Production Impact: 7
+
+=== KEY FINDINGS ===
+- Visual Aid Accuracy: -0.85  # Strongest negative impact
+- Part Verification: -0.40
+- Operator Training: 0.10
+
+=== RECOMMENDATIONS ===
+Root Cause Analysis:
+The primary cause was incorrect visual aid combined with inadequate part verification.
+
+Corrective Actions:
+1. Replace all incorrect visual aids by Friday
+2. Quarantine affected products
+
+Preventive Actions:
+1. Implement visual aid approval process
+2. Add secondary part verification step
+5. Customization Options
+For Different Factories:
+
+python
+# Modify the knowledge graph:
+self.common_causal_graph.add_edge('New_Factor', 'Production_Impact')
+For Stricter Quality Control:
+
+python
+# Adjust probabilities in synthetic data:
+base_values = {
+    'Part_Verification_Process': 0.95  # 95% verification rate
+}
+For Different Output Formats:
+
+python
+# In format_plaintext_output():
+output.append(f"🚨 {factor}: {score*100:.0f}% impact")
+This system combines statistical causal analysis with AI understanding to provide:
+
+Clear identification of root causes
+
+Quantified impact of different factors
+
+Actionable recommendations
+
+***************************
+
 import pandas as pd
 import networkx as nx
 from dowhy import gcm
