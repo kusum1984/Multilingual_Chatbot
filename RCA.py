@@ -1,6 +1,137 @@
 import pandas as pd
 import networkx as nx
 from dowhy import gcm
+from typing import Dict, Any
+import json
+import numpy as np
+from scipy.stats import bernoulli, norm
+from openai import AzureOpenAI
+
+class ManufacturingRCAAnalyzer:
+    def __init__(self, azure_openai_client):
+        """Initialize with Azure OpenAI client"""
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        
+    def _build_common_causal_graph(self) -> nx.DiGraph:
+        """Build manufacturing causal graph"""
+        return nx.DiGraph([
+            ('Document_Version_Control', 'Work_Instruction_Accuracy'),
+            ('BOM_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Setup_Sheet_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Visual_Aid_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Operator_Training', 'Correct_Part_Usage'),
+            ('Work_Instruction_Accuracy', 'Correct_Part_Usage'),
+            ('Part_Verification_Process', 'Correct_Part_Usage'),
+            ('Line_Stoppage_Protocol', 'Production_Impact'),
+            ('Correct_Part_Usage', 'Production_Impact'),
+            ('Work_Instruction_Accuracy', 'Production_Impact')
+        ])
+    
+    def _generate_synthetic_data(self, case_details: Dict[str, Any], num_samples=100) -> pd.DataFrame:
+        """Generate realistic synthetic data"""
+        distributions = {
+            'Document_Version_Control': gcm.ScipyDistribution(bernoulli, case_details.get('document_version_issue', 0.1)),
+            'BOM_Accuracy': gcm.ScipyDistribution(bernoulli, case_details.get('bom_accurate', 0.95)),
+            'Visual_Aid_Accuracy': gcm.ScipyDistribution(bernoulli, case_details.get('visual_aid_accurate', 0.8)),
+            'Production_Impact': gcm.ScipyDistribution(norm, loc=case_details.get('production_impact', 1), scale=0.1)
+        }
+        
+        data = {}
+        for node in self.common_causal_graph.nodes():
+            if node in distributions:
+                data[node] = distributions[node].draw_samples(num_samples)
+            else:
+                val = case_details.get(node.lower().replace('_', ''), 0.5)
+                data[node] = gcm.ScipyDistribution(bernoulli, val).draw_samples(num_samples)
+                
+        return pd.DataFrame(data)
+    
+    def _call_azure_openai(self, prompt: str) -> str:
+        """Make direct API call to Azure OpenAI"""
+        response = self.client.chat.completions.create(
+            model="your-deployment-name",  # Replace with your deployment name
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        return response.choices[0].message.content
+    
+    def _extract_case_details(self, case_text: str) -> Dict[str, Any]:
+        """Simplified extraction without retries"""
+        prompt = f"""Analyze this manufacturing case and return JSON with exactly these fields:
+{{
+    "document_version_issue": bool,
+    "bom_accurate": bool,
+    "visual_aid_accurate": bool,
+    "correct_part_used": bool,
+    "production_impact": int,
+    "root_cause_hypothesis": str
+}}
+
+Case: {case_text}"""
+        
+        response = self._call_azure_openai(prompt)
+        return json.loads(response)
+    
+    def analyze_case(self, case_text: str) -> Dict[str, Any]:
+        """Streamlined RCA analysis"""
+        case_details = self._extract_case_details(case_text)
+        data = self._generate_synthetic_data(case_details)
+        
+        # Configure causal mechanisms
+        for node in self.common_causal_graph.nodes():
+            if node == 'Production_Impact':
+                self.scm.set_causal_mechanism(node, gcm.AdditiveNoiseModel(
+                    gcm.ml.create_linear_regressor()))
+            else:
+                self.scm.set_causal_mechanism(node, gcm.AdditiveNoiseModel(
+                    gcm.ml.create_logistic_regression_classifier()))
+        
+        gcm.fit(self.scm, data)
+        
+        attributions = gcm.attribute_anomalies(
+            self.scm, 
+            target_node='Production_Impact',
+            anomaly_samples=data.iloc[:1]
+        )
+        
+        return {
+            'case_details': case_details,
+            'causal_attributions': {k: float(v[0]) for k, v in attributions.items()},
+            'recommendations': json.loads(self._call_azure_openai(
+                f"Generate CAPA recommendations for:\n{json.dumps(case_details, indent=2)}"))
+        }
+
+# Direct initialization without error handling
+client = AzureOpenAI(
+    api_key="your-api-key",          # Replace with your actual API key
+    api_version="2023-12-01-preview", # Replace if needed
+    azure_endpoint="https://your-resource.openai.azure.com"  # Replace with your endpoint
+)
+
+# Example usage
+analyzer = ManufacturingRCAAnalyzer(client)
+case_text = """On Jan 12, 2021, the MESE1 Manufacturing Line was stopped due to discrepancy between Visual Aids and Setup Sheet, resulting in incorrect screw P/N used at Build Station 4. Work instruction OPER-WI-086 Rev C specifies P/N 5600203-01, but P/N 5600008-03 was used. The BOM and Setup Sheet are correct, but the Visual Aid rev 003 shows the wrong P/N."""
+
+try:
+    results = analyzer.analyze_case(case_text)
+    print(json.dumps(results, indent=2))
+except Exception as e:
+    print(f"Analysis failed: {str(e)}")
+    print("Common issues:")
+    print("1. Verify your Azure OpenAI credentials are correct")
+    print("2. Check the case text format")
+    print("3. Ensure your deployment supports JSON format")
+
+*****************************
+**************************************
+
+
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
 from typing import Dict, Any, Optional
 import json
 import os
