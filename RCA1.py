@@ -1,3 +1,53 @@
+# ... (keep all the existing imports and class definitions the same until the main block)
+
+if __name__ == "__main__":
+    """Main execution flow for command-line usage."""
+    try:
+        # Initialize clients and analyzer
+        client = initialize_azure_client()
+        analyzer = ManufacturingRCAAnalyzer(client)
+        
+        # Print the causal graph structure
+        print("\n=== CAUSAL GRAPH STRUCTURE ===")
+        print("Nodes:", analyzer.common_causal_graph.nodes())
+        print("Edges:", analyzer.common_causal_graph.edges())
+        
+        # Visual representation of the graph
+        print("\n=== GRAPH VISUALIZATION ===")
+        for source, target in analyzer.common_causal_graph.edges():
+            print(f"{source} -> {target}")
+            
+        # Example manufacturing incident
+        case_text = """On Jan 12, 2021, the MESE1 Manufacturing Line was stopped due to discrepancy between Visual Aids and Setup Sheet, resulting in incorrect screw P/N used at Build Station 4. Work instruction OPER-WI-086 Rev C specifies P/N 5600203-01, but P/N 5600008-03 was used. The BOM and Setup Sheet are correct, but the Visual Aid rev 003 shows the wrong P/N."""
+        
+        # Extract case details and print them
+        case_details = analyzer._extract_case_details(case_text)
+        print("\n=== EXTRACTED CASE DETAILS ===")
+        print(json.dumps(case_details, indent=2))
+        
+        # Generate and print synthetic data
+        synthetic_data = analyzer._generate_synthetic_data(case_details, num_samples=10)  # Smaller sample for display
+        print("\n=== SYNTHETIC DATA SAMPLE ===")
+        print(synthetic_data.head())
+        print("\nData Statistics:")
+        print(synthetic_data.describe())
+        
+        # Perform full analysis and display results
+        results = analyzer.analyze_case(case_text, num_samples=100)
+        print("\n" + "="*50)
+        print(format_plaintext_output(results))
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        print("Troubleshooting:")
+        print("1. Verify .env file contains required Azure OpenAI credentials")
+        print("2. Check case text contains clear incident details")
+        print("3. Ensure deployment supports JSON format when required")
+
+
+
+***************************
+*************************************
 """
 Manufacturing Root Cause Analysis (RCA) System
 
