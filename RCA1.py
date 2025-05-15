@@ -1,4 +1,268 @@
 """
+Manufacturing Root Cause Analysis (RCA) System with PDF Reporting
+"""
+
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
+from typing import Dict, Any
+import json
+import os
+import numpy as np
+from openai import AzureOpenAI
+from dotenv import load_dotenv
+import matplotlib.pyplot as plt
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+
+class ManufacturingRCAAnalyzer:
+    """Main analyzer class that performs root cause analysis for manufacturing incidents."""
+    
+    def __init__(self, azure_openai_client):
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        
+    def _build_common_causal_graph(self) -> nx.DiGraph:
+        """Constructs the manufacturing process causal graph."""
+        return nx.DiGraph([
+            ('Document_Version_Control', 'Work_Instruction_Accuracy'),
+            ('BOM_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Setup_Sheet_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Visual_Aid_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Operator_Training', 'Correct_Part_Usage'),
+            ('Work_Instruction_Accuracy', 'Correct_Part_Usage'),
+            ('Part_Verification_Process', 'Correct_Part_Usage'),
+            ('Line_Stoppage_Protocol', 'Production_Impact'),
+            ('Correct_Part_Usage', 'Production_Impact'),
+            ('Work_Instruction_Accuracy', 'Production_Impact')
+        ])
+    
+    def _generate_synthetic_data(self, case_details: Dict[str, Any], num_samples=100) -> pd.DataFrame:
+        """Generates synthetic manufacturing data based on case specifics."""
+        base_values = {
+            'Document_Version_Control': case_details.get('document_version_issue', 0),
+            'BOM_Accuracy': case_details.get('bom_accurate', 1),
+            'Setup_Sheet_Accuracy': case_details.get('setup_sheet_accurate', 1),
+            'Visual_Aid_Accuracy': case_details.get('visual_aid_accurate', 0),
+            'Operator_Training': case_details.get('operator_trained', 1),
+            'Part_Verification_Process': case_details.get('part_verification_done', 0),
+            'Line_Stoppage_Protocol': case_details.get('line_stopped_correctly', 1),
+            'Correct_Part_Usage': case_details.get('correct_part_used', 0),
+            'Production_Impact': case_details.get('production_impact', 1),
+            'Work_Instruction_Accuracy': 1
+        }
+        
+        data = {}
+        for col, val in base_values.items():
+            if col == 'Production_Impact':
+                samples = np.random.normal(val, 0.1, num_samples)
+                data[col] = samples.tolist()
+            else:
+                samples = np.random.normal(val, 0.1, num_samples)
+                data[col] = np.clip(samples, 0, 1).round().astype(int).tolist()
+                
+        return pd.DataFrame(data)
+    
+    def visualize_causal_graph(self, save_path=None):
+        """Visualizes the causal graph using matplotlib and returns image path."""
+        plt.figure(figsize=(10, 8))
+        pos = nx.spring_layout(self.common_causal_graph, seed=42)
+        
+        # Draw nodes and edges
+        nx.draw_networkx_nodes(self.common_causal_graph, pos, node_size=2000, node_color='lightblue')
+        nx.draw_networkx_edges(self.common_causal_graph, pos, arrowstyle='->', arrowsize=20, width=2)
+        nx.draw_networkx_labels(self.common_causal_graph, pos, font_size=10, font_weight='bold')
+        
+        plt.title("Manufacturing Process Causal Graph", fontsize=14)
+        plt.axis('off')
+        plt.tight_layout()
+        
+        if save_path is None:
+            save_path = f"causal_graph_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        return save_path
+        
+    def export_synthetic_data(self, data: pd.DataFrame):
+        """Exports synthetic data to Excel file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_path = f"synthetic_data_{timestamp}.xlsx"
+        
+        writer = pd.ExcelWriter(excel_path, engine='xlsxwriter')
+        data.to_excel(writer, sheet_name='Synthetic_Data', index=False)
+        
+        stats = data.describe().transpose()
+        stats.to_excel(writer, sheet_name='Statistics')
+        
+        workbook = writer.book
+        worksheet = writer.sheets['Synthetic_Data']
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC'})
+        
+        for col_num, value in enumerate(data.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+        
+        writer.close()
+        return excel_path
+    
+    def generate_pdf_report(self, results: Dict[str, Any], graph_path: str, data_path: str):
+        """Generates a professional PDF report of the analysis."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = f"RCA_Report_{timestamp}.pdf"
+        
+        # Create document
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'Title',
+            parent=styles['Heading1'],
+            fontSize=16,
+            alignment=1,
+            spaceAfter=12
+        )
+        
+        section_style = ParagraphStyle(
+            'Section',
+            parent=styles['Heading2'],
+            fontSize=12,
+            spaceBefore=12,
+            spaceAfter=6
+        )
+        
+        # Report content
+        story = []
+        
+        # Title
+        story.append(Paragraph("Manufacturing Root Cause Analysis Report", title_style))
+        story.append(Spacer(1, 12))
+        
+        # Case Details
+        story.append(Paragraph("Case Details", section_style))
+        case_data = []
+        for key, value in results['case_details'].items():
+            if isinstance(value, bool):
+                value = "Yes" if value else "No"
+            case_data.append([key.replace('_', ' ').title(), str(value)])
+        
+        case_table = Table(case_data, colWidths=[2*inch, 3*inch])
+        case_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(case_table)
+        story.append(Spacer(1, 12))
+        
+        # Causal Graph
+        story.append(Paragraph("Causal Relationships", section_style))
+        story.append(Image(graph_path, width=6*inch, height=4.5*inch))
+        story.append(Spacer(1, 12))
+        
+        # Key Findings
+        story.append(Paragraph("Key Findings", section_style))
+        if results['causal_attributions']:
+            causal_factors = {
+                k: float(v[0]) if isinstance(v, (list, np.ndarray)) else float(v)
+                for k, v in results['causal_attributions'].items()
+            }
+            top_factors = sorted(causal_factors.items(), 
+                               key=lambda x: abs(x[1]), reverse=True)[:3]
+            
+            findings_data = [["Factor", "Impact Score"]] + [[k.replace('_', ' ').title(), f"{v:.2f}"] for k, v in top_factors]
+            
+            findings_table = Table(findings_data, colWidths=[3*inch, 2*inch])
+            findings_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOX', (0, 0), (-1, -1), 1, colors.black),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(findings_table)
+            story.append(Spacer(1, 12))
+        
+        # Recommendations
+        story.append(Paragraph("Recommendations", section_style))
+        rec_text = results['recommendations'].replace('\n', '<br/>')
+        story.append(Paragraph(rec_text, styles['Normal']))
+        story.append(Spacer(1, 12))
+        
+        # Data Reference
+        story.append(Paragraph("Data Reference", section_style))
+        story.append(Paragraph(f"Synthetic data exported to: {data_path}", styles['Normal']))
+        
+        # Build the PDF
+        doc.build(story)
+        return pdf_path
+    
+    # ... (keep all other existing methods the same)
+
+if __name__ == "__main__":
+    """Main execution flow with PDF reporting."""
+    try:
+        # Initialize clients and analyzer
+        client = initialize_azure_client()
+        analyzer = ManufacturingRCAAnalyzer(client)
+        
+        # Example manufacturing incident
+        case_text = """On Jan 12, 2021, the MESE1 Manufacturing Line was stopped due to discrepancy between Visual Aids and Setup Sheet, resulting in incorrect screw P/N used at Build Station 4. Work instruction OPER-WI-086 Rev C specifies P/N 5600203-01, but P/N 5600008-03 was used. The BOM and Setup Sheet are correct, but the Visual Aid rev 003 shows the wrong P/N."""
+        
+        # Generate graph visualization
+        graph_path = analyzer.visualize_causal_graph()
+        print(f"\nGraph visualization saved to: {graph_path}")
+        
+        # Extract case details
+        case_details = analyzer._extract_case_details(case_text)
+        print("\n=== EXTRACTED CASE DETAILS ===")
+        print(json.dumps(case_details, indent=2))
+        
+        # Generate and export synthetic data
+        synthetic_data = analyzer._generate_synthetic_data(case_details, num_samples=100)
+        data_path = analyzer.export_synthetic_data(synthetic_data)
+        print(f"\nSynthetic data exported to: {data_path}")
+        print("\n=== SYNTHETIC DATA SAMPLE (First 5 Rows) ===")
+        print(synthetic_data.head())
+        
+        # Perform full analysis
+        results = analyzer.analyze_case(case_text, num_samples=100)
+        
+        # Generate PDF report
+        pdf_path = analyzer.generate_pdf_report(results, graph_path, data_path)
+        print(f"\nPDF report generated: {pdf_path}")
+        
+        # Print console output
+        print("\n" + "="*50)
+        print(format_plaintext_output(results))
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        print("Troubleshooting:")
+        print("1. Verify .env file contains required Azure OpenAI credentials")
+        print("2. Check case text contains clear incident details")
+        print("3. Ensure deployment supports JSON format when required")
+
+
+*******************************
+**************************************
+***********************************************
+
+
+
+
+
+"""
 Manufacturing Root Cause Analysis (RCA) System with Enhanced Visualization and Data Export
 """
 
