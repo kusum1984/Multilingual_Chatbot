@@ -1,3 +1,139 @@
+def generate_pdf_report(self, results: Dict[str, Any], graph_path: str, data_path: str) -> str:
+    """Generates professional PDF report with consistent factor presentation."""
+    pdf_path = f"RCA_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    
+    doc = SimpleDocTemplate(
+        pdf_path, 
+        pagesize=letter,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40
+    )
+    
+    styles = getSampleStyleSheet()
+    wrapped_style = ParagraphStyle(
+        'Wrapped',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=12,
+        spaceAfter=6
+    )
+    
+    # Generate visualizations
+    causal_graph_path = self.visualize_causal_graph()
+    impact_path = self.visualize_impact_graph(results['causal_influence'])
+    
+    story = []
+    
+    # Title
+    story.append(Paragraph("Manufacturing Root Cause Analysis Report", styles['Title']))
+    story.append(Spacer(1, 12))
+    
+    # Case Details
+    story.append(Paragraph("Case Details", styles['Heading2']))
+    case_data = []
+    for key, value in results['case_details'].items():
+        if key == 'root_cause_hypothesis':
+            continue
+        display_key = key.replace('_', ' ').title()
+        display_value = "Yes" if isinstance(value, bool) and value else \
+                      "No" if isinstance(value, bool) else str(value)
+        case_data.append([display_key, display_value])
+    
+    case_table = Table(case_data, colWidths=[2*inch, 4*inch])
+    case_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    story.append(case_table)
+    story.append(Spacer(1, 12))
+    
+    # Root Cause Hypothesis
+    hypothesis = results['case_details'].get('root_cause_hypothesis', 'Not specified')
+    story.append(Paragraph("<b>Root Cause Hypothesis:</b>", styles['Heading2']))
+    story.extend(self._generate_wrapped_paragraph(hypothesis, wrapped_style))
+    story.append(Spacer(1, 12))
+    
+    # Causal Graph
+    story.append(Paragraph("Causal Relationships", styles['Heading2']))
+    story.append(Image(causal_graph_path, width=6*inch, height=4.5*inch))
+    story.append(Spacer(1, 12))
+    
+    # Impact Graph
+    story.append(Paragraph("System-Wide Causal Influence", styles['Heading2']))
+    story.append(Image(impact_path, width=6*inch, height=4.5*inch))
+    story.append(Spacer(1, 12))
+    
+    # Key Contributing Factors - Anomaly Attribution
+    story.append(Paragraph("Incident-Specific Factor Contributions", styles['Heading2']))
+    if results['causal_attributions']:
+        causal_factors = {
+            k: float(v[0]) if isinstance(v, (list, np.ndarray)) else float(v)
+            for k, v in results['causal_attributions'].items()
+        }
+        top_factors = sorted(causal_factors.items(), 
+                           key=lambda x: abs(x[1]), reverse=True)[:5]  # Show top 5
+        
+        factors_data = [["Factor", "Contribution Score"]] + [
+            [k.replace('_', ' ').title(), f"{v:.4f}"] 
+            for k, v in top_factors
+        ]
+        
+        factors_table = Table(factors_data, colWidths=[3*inch, 2*inch])
+        factors_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(factors_table)
+        story.append(Spacer(1, 6))
+        
+        # Add explanation
+        explanation = """
+        <b>Interpretation:</b> Contribution scores indicate how much each factor contributed 
+        to this specific incident. Scores range from -1 to 1, where positive values indicate 
+        the factor increased the likelihood of the issue, and negative values indicate it 
+        had a protective effect.
+        """
+        story.extend(self._generate_wrapped_paragraph(explanation, wrapped_style))
+    story.append(Spacer(1, 12))
+    
+    # System Influence Summary
+    story.append(Paragraph("System Influence Summary", styles['Heading2']))
+    influence_text = """
+    The graph above shows each factor's normalized influence on Production Impact across 
+    the entire manufacturing system. Larger nodes indicate factors with greater systemic 
+    influence, regardless of their role in this specific incident.
+    """
+    story.extend(self._generate_wrapped_paragraph(influence_text, wrapped_style))
+    story.append(Spacer(1, 12))
+    
+    # Recommendations
+    story.append(Paragraph("Recommended Actions", styles['Heading2']))
+    story.extend(self._generate_wrapped_paragraph(results['recommendations'], wrapped_style))
+    story.append(Spacer(1, 12))
+    
+    # Data Reference
+    story.append(Paragraph("Data Reference", styles['Heading2']))
+    story.append(Paragraph(f"Synthetic data exported to: {data_path}", styles['Normal']))
+    
+    doc.build(story)
+    return pdf_path
+
+
+************************
+**************************
+
+
 import pandas as pd
 import networkx as nx
 from dowhy import gcm
