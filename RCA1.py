@@ -1,3 +1,79 @@
+def _generate_realistic_synthetic_data(self, case_details: Dict[str, Any], num_samples=500) -> pd.DataFrame:
+    """Generates synthetic data with all required variables."""
+    base_values = {
+        'Document_Version_Control': case_details.get('document_version_issue', 0),
+        'BOM_Accuracy': case_details.get('bom_accurate', 1),
+        'Setup_Sheet_Accuracy': case_details.get('setup_sheet_accurate', 1),
+        'Visual_Aid_Accuracy': case_details.get('visual_aid_accurate', 0),
+        'Operator_Training': case_details.get('operator_trained', 1),
+        'Part_Verification_Process': case_details.get('part_verification_done', 0),
+        'Line_Stoppage_Protocol': case_details.get('line_stopped_correctly', 1),
+        'Equipment_Condition': case_details.get('equipment_condition', 0.8),
+        'Material_Quality': case_details.get('material_quality', 0.9),
+        'Correct_Part_Usage': case_details.get('correct_part_used', 0),  # Added this line
+        'Work_Instruction_Accuracy': 1,  # Will be calculated
+        'Production_Impact': case_details.get('production_impact', 1)  # Will be calculated
+    }
+    
+    rng = np.random.default_rng(42)
+    data = pd.DataFrame()
+    
+    # Generate core variables
+    for col in ['Document_Version_Control', 'BOM_Accuracy', 'Setup_Sheet_Accuracy',
+               'Visual_Aid_Accuracy', 'Operator_Training', 'Part_Verification_Process',
+               'Line_Stoppage_Protocol', 'Equipment_Condition', 'Material_Quality']:
+        if col in ['Document_Version_Control', 'Visual_Aid_Accuracy', 'Operator_Training',
+                  'Part_Verification_Process', 'Line_Stoppage_Protocol']:
+            data[col] = rng.binomial(1, base_values[col], num_samples)
+        else:
+            data[col] = np.clip(rng.normal(base_values[col], 0.1, num_samples), 0, 1)
+    
+    # Calculate derived variables
+    data['Work_Instruction_Accuracy'] = np.clip(
+        0.3 * data['Document_Version_Control'] +
+        0.3 * data['BOM_Accuracy'] +
+        0.3 * data['Setup_Sheet_Accuracy'] +
+        0.1 * data['Visual_Aid_Accuracy'] +
+        rng.normal(0, 0.05, num_samples),
+        0, 1
+    )
+    
+    data['Correct_Part_Usage'] = np.clip(
+        0.4 * data['Operator_Training'] +
+        0.3 * data['Work_Instruction_Accuracy'] +
+        0.3 * data['Part_Verification_Process'] +
+        rng.normal(0, 0.1, num_samples),
+        0, 1
+    ).round()  # Make it binary
+    
+    data['Production_Impact'] = np.clip(
+        0.5 * (1 - data['Correct_Part_Usage']) +
+        0.2 * (1 - data['Work_Instruction_Accuracy']) +
+        0.2 * (1 - data['Equipment_Condition']) +
+        0.1 * (1 - data['Material_Quality']) +
+        rng.normal(0, 0.05, num_samples),
+        0, 1
+    )
+    
+    return data
+
+def analyze_case(self, case_text: str, num_samples=500) -> Dict[str, Any]:
+    case_details = self._extract_case_details(case_text)
+    data = self._generate_realistic_synthetic_data(case_details, num_samples)
+    
+    # Ensure all graph nodes are in data
+    missing_nodes = set(self.common_causal_graph.nodes()) - set(data.columns)
+    if missing_nodes:
+        raise ValueError(f"Missing data for nodes: {missing_nodes}")
+    
+    # Rest of your analysis code...
+
+
+**************************************
+    ***************************************
+        ***********************************
+
+
 """
 Enhanced Manufacturing Root Cause Analysis (RCA) System with Causal Influence Analysis
 """
