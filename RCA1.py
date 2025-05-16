@@ -1,3 +1,33 @@
+def format_plaintext_output(results: Dict[str, Any]) -> str:
+    """Formats results to exactly match JSON structure in plain text"""
+    output = []
+    
+    # Case Details (matches JSON keys exactly)
+    output.append("=== CASE DETAILS ===")
+    for key, value in results['case_details'].items():
+        display_key = key.replace('_', ' ').title()
+        if isinstance(value, bool):
+            output.append(f"{display_key}: {'Yes' if value else 'No'}")
+        else:
+            output.append(f"{display_key}: {value}")
+    
+    # Causal Attributions (matches JSON structure)
+    output.append("\n=== CAUSAL ATTRIBUTIONS ===")
+    for factor, score in results['causal_attributions'].items():
+        output.append(f"- {factor.replace('_', ' ').title()}: {score:.4f}")
+    
+    # Recommendations (directly from JSON)
+    output.append("\n=== RECOMMENDATIONS ===")
+    output.append(results['recommendations'])
+    
+    return "\n".join(output)
+
+********************
+***************************
+*******************************
+
+
+
 def _generate_realistic_synthetic_data(self, case_details: Dict[str, Any], num_samples=500) -> pd.DataFrame:
     """Generates synthetic data with all required variables."""
     base_values = {
