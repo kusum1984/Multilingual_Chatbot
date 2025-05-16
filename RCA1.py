@@ -1,6 +1,618 @@
 import pandas as pd
 import networkx as nx
 from dowhy import gcm
+from typing import Dict, Any, List, Tuple
+import json
+import os
+import numpy as np
+from openai import AzureOpenAI
+from dotenv import load_dotenv
+import matplotlib.pyplot as plt
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from scipy.stats import norm
+
+class ManufacturingRCAAnalyzer:
+    """Enhanced RCA analyzer with comprehensive impact analysis on target node."""
+    
+    def __init__(self, azure_openai_client):
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        self.potential_root_causes = set()
+
+    def _build_common_causal_graph(self) -> nx.DiGraph:
+        """Constructs the manufacturing process causal graph with enhanced relationships."""
+        return nx.DiGraph([
+            ('Document_Version_Control', 'Work_Instruction_Accuracy'),
+            ('Document_Version_Control', 'Visual_Aid_Accuracy'),
+            ('BOM_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Setup_Sheet_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Visual_Aid_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Operator_Training', 'Correct_Part_Usage'),
+            ('Operator_Training', 'Part_Verification_Process'),
+            ('Work_Instruction_Accuracy', 'Correct_Part_Usage'),
+            ('Part_Verification_Process', 'Correct_Part_Usage'),
+            ('Line_Stoppage_Protocol', 'Production_Impact'),
+            ('Correct_Part_Usage', 'Production_Impact'),
+            ('Work_Instruction_Accuracy', 'Production_Impact'),
+            ('Equipment_Condition', 'Production_Impact'),
+            ('Material_Quality', 'Production_Impact')
+        ])
+
+    def _generate_realistic_synthetic_data(self, case_details: Dict[str, Any], num_samples=500) -> pd.DataFrame:
+        """Generates synthetic data with realistic distributions and relationships."""
+        base_values = {
+            'Document_Version_Control': case_details.get('document_version_issue', 0),
+            'BOM_Accuracy': case_details.get('bom_accurate', 1),
+            'Setup_Sheet_Accuracy': case_details.get('setup_sheet_accurate', 1),
+            'Visual_Aid_Accuracy': case_details.get('visual_aid_accurate', 0),
+            'Operator_Training': case_details.get('operator_trained', 1),
+            'Part_Verification_Process': case_details.get('part_verification_done', 0),
+            'Line_Stoppage_Protocol': case_details.get('line_stopped_correctly', 1),
+            'Equipment_Condition': case_details.get('equipment_condition', 0.8),
+            'Material_Quality': case_details.get('material_quality', 0.9),
+            'Correct_Part_Usage': case_details.get('correct_part_used', 0),
+            'Work_Instruction_Accuracy': 1,
+            'Production_Impact': case_details.get('production_impact', 1)
+        }
+        
+        rng = np.random.default_rng(42)
+        data = pd.DataFrame()
+        
+        # Generate base variables with appropriate distributions
+        for col in ['Document_Version_Control', 'BOM_Accuracy', 'Setup_Sheet_Accuracy',
+                   'Visual_Aid_Accuracy', 'Operator_Training', 'Part_Verification_Process',
+                   'Line_Stoppage_Protocol', 'Equipment_Condition', 'Material_Quality']:
+            if col in ['Document_Version_Control', 'Visual_Aid_Accuracy', 'Operator_Training',
+                      'Part_Verification_Process', 'Line_Stoppage_Protocol']:
+                data[col] = rng.binomial(1, base_values[col], num_samples)
+            else:
+                data[col] = np.clip(rng.normal(base_values[col], 0.1, num_samples), 0, 1)
+        
+        # Generate intermediate nodes with causal relationships
+        data['Work_Instruction_Accuracy'] = np.clip(
+            0.3 * data['Document_Version_Control'] +
+            0.3 * data['BOM_Accuracy'] +
+            0.3 * data['Setup_Sheet_Accuracy'] +
+            0.1 * data['Visual_Aid_Accuracy'] +
+            rng.normal(0, 0.05, num_samples),
+            0, 1
+        )
+        
+        data['Correct_Part_Usage'] = np.clip(
+            0.4 * data['Operator_Training'] +
+            0.3 * data['Work_Instruction_Accuracy'] +
+            0.3 * data['Part_Verification_Process'] +
+            rng.normal(0, 0.1, num_samples),
+            0, 1
+        ).round()
+        
+        # Generate target node with enhanced impact relationships
+        data['Production_Impact'] = np.clip(
+            0.5 * (1 - data['Correct_Part_Usage']) +
+            0.2 * (1 - data['Work_Instruction_Accuracy']) +
+            0.2 * (1 - data['Equipment_Condition']) +
+            0.1 * (1 - data['Material_Quality']) +
+            rng.normal(0, 0.05, num_samples),
+            0, 1
+        )
+        
+        return data
+
+    def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """Comprehensive analysis of impact pathways to target node."""
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        gcm.fit(self.scm, data)
+        
+        impact_metrics = {}
+        
+        # 1. Direct causal influence (total contribution)
+        impact_metrics['direct_influence'] = gcm.intrinsic_causal_influence(
+            self.scm, 
+            target_node='Production_Impact',
+            prediction_model='approx'
+        )
+        
+        # 2. Path-specific effects (direct paths)
+        impact_metrics['path_effects'] = {}
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact':
+                effect = gcm.average_causal_effect(
+                    self.scm,
+                    node,
+                    'Production_Impact'
+                )
+                if not np.isnan(effect):
+                    impact_metrics['path_effects'][node] = effect
+        
+        # 3. Counterfactual impact (what-if analysis)
+        impact_metrics['counterfactual'] = {}
+        normal_samples = data.mean().to_frame().T
+        anomaly_samples = data.iloc[:1]
+        
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact':
+                effect = gcm.counterfactual.distribute_causal_effect(
+                    self.scm,
+                    'Production_Impact',
+                    node,
+                    normal_samples,
+                    anomaly_samples
+                )
+                if effect is not None:
+                    impact_metrics['counterfactual'][node] = float(effect)
+        
+        # 4. Statistical significance testing
+        impact_metrics['significance'] = self._calculate_impact_significance(data)
+        
+        return impact_metrics
+
+    def _calculate_impact_significance(self, data: pd.DataFrame) -> Dict[str, Tuple[float, float]]:
+        """Calculates statistical significance of each factor's impact."""
+        significance = {}
+        num_iterations = 100
+        baseline = data['Production_Impact'].mean()
+        
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact':
+                effects = []
+                for _ in range(num_iterations):
+                    # Create intervention (set to mean value)
+                    intervened_data = data.copy()
+                    intervened_data[node] = data[node].mean()
+                    
+                    # Predict outcome under intervention
+                    pred = gcm.interventional_samples(
+                        self.scm,
+                        interventions={node: lambda x: np.full(x.shape[0], data[node].mean())},
+                        num_samples_to_draw=100
+                    )['Production_Impact']
+                    
+                    effects.append(baseline - pred.mean())
+                
+                # Calculate p-value
+                mean_effect = np.mean(effects)
+                std_effect = np.std(effects)
+                if std_effect > 0:
+                    z_score = mean_effect / (std_effect / np.sqrt(num_iterations))
+                    p_value = 2 * (1 - norm.cdf(abs(z_score)))
+                else:
+                    p_value = 0.0
+                
+                significance[node] = (mean_effect, p_value)
+        
+        return significance
+
+    def visualize_impact_breakdown(self, impact_metrics: Dict) -> str:
+        """Creates detailed impact breakdown visualization."""
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
+        
+        # Direct influence plot
+        direct = impact_metrics['direct_influence']
+        ax1.barh(list(direct.keys()), list(direct.values()), color='skyblue')
+        ax1.set_title('Total Causal Influence', fontsize=12)
+        ax1.set_xlabel('Impact Score', fontsize=10)
+        
+        # Path effects plot
+        path_df = pd.DataFrame(impact_metrics['path_effects'].items(), 
+                             columns=['Factor', 'Effect'])
+        path_df.plot.barh(x='Factor', y='Effect', ax=ax2, color='lightgreen')
+        ax2.set_title('Average Causal Effects (Direct Paths)', fontsize=12)
+        ax2.set_xlabel('Effect Size', fontsize=10)
+        
+        # Counterfactual plot
+        counter_df = pd.DataFrame(impact_metrics['counterfactual'].items(),
+                                columns=['Factor', 'Effect'])
+        counter_df.plot.barh(x='Factor', y='Effect', ax=ax3, color='salmon')
+        ax3.set_title('Counterfactual Impact (What-If)', fontsize=12)
+        ax3.set_xlabel('Change in Production Impact', fontsize=10)
+        
+        plt.tight_layout()
+        path = f"impact_breakdown_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        plt.savefig(path, dpi=300, bbox_inches='tight')
+        plt.close()
+        return path
+
+    def visualize_causal_graph(self, save_path=None) -> str:
+        """Visualizes the causal graph with enhanced formatting."""
+        plt.figure(figsize=(12, 10))
+        pos = nx.spring_layout(self.common_causal_graph, seed=42, k=0.5)
+        
+        # Draw nodes with different styles for root nodes
+        root_nodes = [node for node in self.common_causal_graph.nodes() 
+                     if self.common_causal_graph.in_degree(node) == 0]
+        non_root_nodes = [node for node in self.common_causal_graph.nodes() 
+                         if node not in root_nodes]
+        
+        nx.draw_networkx_nodes(self.common_causal_graph, pos, nodelist=root_nodes,
+                              node_size=2500, node_color='lightblue', node_shape='s')
+        nx.draw_networkx_nodes(self.common_causal_graph, pos, nodelist=non_root_nodes,
+                              node_size=2000, node_color='lightgreen', node_shape='o')
+        
+        # Draw edges with weights
+        nx.draw_networkx_edges(self.common_causal_graph, pos, 
+                              arrowstyle='->', arrowsize=20, width=1.5,
+                              edge_color='gray')
+        
+        # Draw labels
+        nx.draw_networkx_labels(self.common_causal_graph, pos, 
+                               font_size=10, font_weight='bold')
+        
+        plt.title("Manufacturing Process Causal Graph", fontsize=14)
+        plt.axis('off')
+        
+        if save_path is None:
+            save_path = f"causal_graph_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        return save_path
+
+    def _generate_wrapped_paragraph(self, text: str, style) -> List[Paragraph]:
+        """Generates wrapped text paragraphs for PDF reports."""
+        lines = text.split('\n')
+        paragraphs = []
+        for line in lines:
+            if line.strip():
+                paragraphs.append(Paragraph(line.strip().replace('\n', '<br/>'), style))
+                paragraphs.append(Spacer(1, 6))
+        return paragraphs
+
+    def export_synthetic_data(self, data: pd.DataFrame) -> str:
+        """Exports synthetic data to Excel with comprehensive statistics."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_path = f"synthetic_data_{timestamp}.xlsx"
+        
+        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+            data.to_excel(writer, sheet_name='Synthetic_Data', index=False)
+            
+            # Add descriptive statistics
+            stats = data.describe().transpose()
+            stats.to_excel(writer, sheet_name='Statistics')
+            
+            # Add correlation matrix
+            corr = data.corr()
+            corr.to_excel(writer, sheet_name='Correlations')
+            
+            # Formatting
+            workbook = writer.book
+            worksheet = writer.sheets['Synthetic_Data']
+            header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC'})
+            
+            for col_num, value in enumerate(data.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+            
+            # Add conditional formatting for better visualization
+            for sheet in writer.sheets.values():
+                if sheet.name == 'Correlations':
+                    sheet.conditional_format(
+                        f'B2:{chr(65 + len(data.columns))}{len(data.columns) + 1}',
+                        {'type': '3_color_scale'}
+                    )
+        
+        return excel_path
+
+    def _generate_impact_analysis_text(self, impact_metrics: Dict) -> str:
+        """Generates detailed human-readable impact analysis."""
+        text = "## Comprehensive Impact Analysis on Production Impact\n\n"
+        
+        # Direct influence
+        text += "### Total Causal Influence\n"
+        text += "Measures each factor's total contribution through all pathways:\n"
+        for factor, score in sorted(impact_metrics['direct_influence'].items(), 
+                                  key=lambda x: abs(x[1]), reverse=True):
+            text += f"- {factor.replace('_', ' ').title()}: {score:.3f}\n"
+        
+        # Path effects
+        text += "\n### Direct Path Effects\n"
+        text += "Measures average effect through direct causal paths:\n"
+        for factor, effect in sorted(impact_metrics['path_effects'].items(),
+                                    key=lambda x: abs(x[1]), reverse=True):
+            text += f"- {factor.replace('_', ' ').title()}: {effect:.3f}\n"
+        
+        # Counterfactual
+        text += "\n### Counterfactual Impact (What-If Analysis)\n"
+        text += "Shows expected change if factor was at normal levels:\n"
+        for factor, effect in sorted(impact_metrics['counterfactual'].items(),
+                                    key=lambda x: abs(x[1]), reverse=True):
+            text += f"- {factor.replace('_', ' ')}: {effect:.3f} change\n"
+        
+        # Significance
+        text += "\n### Statistical Significance (p-values)\n"
+        text += "Probability that observed impact is not by chance:\n"
+        for factor, (effect, p_value) in sorted(impact_metrics['significance'].items(),
+                                              key=lambda x: x[1][1]):
+            text += (f"- {factor.replace('_', ' ').title()}: "
+                   f"effect={effect:.3f}, p={p_value:.4f} "
+                   f"{'*' if p_value < 0.05 else ''}\n")
+        text += "\n* indicates statistically significant (p < 0.05)\n"
+        
+        return text
+
+    def generate_pdf_report(self, results: Dict[str, Any], data_path: str) -> str:
+        """Generates professional PDF report with all analysis components."""
+        pdf_path = f"RCA_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        
+        doc = SimpleDocTemplate(
+            pdf_path, 
+            pagesize=letter,
+            rightMargin=40,
+            leftMargin=40,
+            topMargin=40,
+            bottomMargin=40
+        )
+        
+        styles = getSampleStyleSheet()
+        wrapped_style = ParagraphStyle(
+            'Wrapped',
+            parent=styles['Normal'],
+            fontSize=10,
+            leading=12,
+            spaceAfter=6
+        )
+        
+        # Generate visualizations
+        causal_graph_path = self.visualize_causal_graph()
+        impact_path = self.visualize_impact_breakdown(results['impact_metrics'])
+        
+        story = []
+        
+        # Title
+        story.append(Paragraph("Comprehensive Manufacturing Root Cause Analysis", styles['Title']))
+        story.append(Spacer(1, 12))
+        
+        # Case Details
+        story.append(Paragraph("Case Details", styles['Heading2']))
+        case_data = []
+        for key, value in results['case_details'].items():
+            if key == 'root_cause_hypothesis':
+                continue
+            display_key = key.replace('_', ' ').title()
+            display_value = "Yes" if isinstance(value, bool) and value else \
+                          "No" if isinstance(value, bool) else str(value)
+            case_data.append([display_key, display_value])
+        
+        case_table = Table(case_data, colWidths=[2*inch, 4*inch])
+        case_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(case_table)
+        story.append(Spacer(1, 12))
+        
+        # Root Cause Hypothesis
+        hypothesis = results['case_details'].get('root_cause_hypothesis', 'Not specified')
+        story.append(Paragraph("<b>Root Cause Hypothesis:</b>", styles['Heading2']))
+        story.extend(self._generate_wrapped_paragraph(hypothesis, wrapped_style))
+        story.append(Spacer(1, 12))
+        
+        # Causal Graph
+        story.append(Paragraph("Causal Relationships", styles['Heading2']))
+        story.append(Image(causal_graph_path, width=6*inch, height=4.5*inch))
+        story.append(Spacer(1, 12))
+        
+        # Impact Analysis
+        story.append(Paragraph("Impact Analysis on Production Impact", styles['Heading2']))
+        story.append(Image(impact_path, width=6*inch, height=4.5*inch))
+        story.append(Spacer(1, 12))
+        
+        # Detailed Impact Metrics
+        impact_text = self._generate_impact_analysis_text(results['impact_metrics'])
+        story.extend(self._generate_wrapped_paragraph(impact_text, wrapped_style))
+        story.append(Spacer(1, 12))
+        
+        # Recommendations
+        story.append(Paragraph("Recommended Actions", styles['Heading2']))
+        story.extend(self._generate_wrapped_paragraph(results['recommendations'], wrapped_style))
+        story.append(Spacer(1, 12))
+        
+        # Data Reference
+        story.append(Paragraph("Data Reference", styles['Heading2']))
+        story.append(Paragraph(f"Synthetic data exported to: {data_path}", styles['Normal']))
+        
+        doc.build(story)
+        return pdf_path
+
+    def _call_azure_openai(self, prompt: str, require_json: bool = False) -> str:
+        """Executes Azure OpenAI API call with proper formatting."""
+        messages = [{"role": "user", "content": prompt}]
+        
+        if require_json:
+            messages[0]["content"] = f"Return the response as a valid JSON object.\n{prompt}"
+            response = self.client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                messages=messages,
+                temperature=0.3,
+                response_format={"type": "json_object"}
+            )
+        else:
+            response = self.client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                messages=messages,
+                temperature=0.3
+            )
+            
+        return response.choices[0].message.content
+
+    def _extract_case_details(self, case_text: str) -> Dict[str, Any]:
+        """Extracts structured case details from incident description using AI."""
+        prompt = f"""Analyze this manufacturing CAPA case and return a JSON object with these exact fields:
+{{
+    "document_version_issue": bool,
+    "bom_accurate": bool,
+    "setup_sheet_accurate": bool,
+    "visual_aid_accurate": bool,
+    "operator_trained": bool,
+    "part_verification_done": bool,
+    "line_stopped_correctly": bool,
+    "correct_part_used": bool,
+    "production_impact": int,
+    "root_cause_hypothesis": str
+}}
+
+Case details:
+{case_text}"""
+        
+        response = self._call_azure_openai(prompt, require_json=True)
+        return json.loads(response)
+
+    def _handle_potential_root_causes(self, case_details: Dict[str, Any]) -> None:
+        """Identifies and tracks potential root causes not in main graph."""
+        hypothesis = case_details.get('root_cause_hypothesis', '').lower()
+        existing_nodes = set(self.common_causal_graph.nodes())
+        
+        potential_causes = {
+            'calibration': 'Equipment_Calibration',
+            'supplier': 'Supplier_Quality',
+            'environment': 'Environmental_Factors'
+        }
+        
+        for term, cause in potential_causes.items():
+            if term in hypothesis and cause not in existing_nodes:
+                self.potential_root_causes.add(cause)
+
+    def _generate_recommendations(self, case_details: Dict[str, Any], impact_metrics: Dict) -> str:
+        """Generates AI-powered recommendations based on impact analysis."""
+        prompt = f"""Generate comprehensive CAPA recommendations based on this impact analysis.
+Include specific actions addressing the highest impact factors.
+
+Impact Analysis Summary:
+{json.dumps({k: v for k, v in impact_metrics.items() if k != 'significance'}, indent=2)}
+
+Case Details:
+{json.dumps(case_details, indent=2)}
+
+Structure your response with these sections:
+
+1. Immediate Containment Actions:
+- [Action 1]
+- [Action 2]
+
+2. Root Cause Correction:
+- [Primary correction addressing top factor]
+- [Secondary corrections]
+
+3. Preventive Measures:
+- [Process improvement 1]
+- [Training enhancement]
+- [System controls]
+
+4. Verification Plan:
+- [Validation method 1]
+- [Testing approach]
+
+5. Effectiveness Monitoring:
+- [Metric 1 to track]
+- [Review schedule]"""
+        
+        return self._call_azure_openai(prompt, require_json=False)
+
+    def analyze_case(self, case_text: str, num_samples=500) -> Dict[str, Any]:
+        """Complete enhanced analysis workflow with comprehensive impact assessment."""
+        case_details = self._extract_case_details(case_text)
+        self._handle_potential_root_causes(case_details)
+        
+        data = self._generate_realistic_synthetic_data(case_details, num_samples)
+        
+        # Comprehensive impact analysis
+        impact_metrics = self.analyze_impact_paths(data)
+        
+        # Anomaly attribution
+        attributions = gcm.attribute_anomalies(
+            self.scm, 
+            target_node='Production_Impact',
+            anomaly_samples=data.iloc[:1]
+        )
+        
+        return {
+            'case_details': case_details,
+            'impact_metrics': impact_metrics,
+            'causal_attributions': {
+                k: float(v[0]) if isinstance(v, (np.ndarray, list)) else float(v)
+                for k, v in attributions.items()
+            },
+            'recommendations': self._generate_recommendations(case_details, impact_metrics)
+        }
+
+def initialize_azure_client() -> AzureOpenAI:
+    """Initializes and returns authenticated Azure OpenAI client."""
+    load_dotenv()
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-12-01-preview"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+
+def format_plaintext_output(results: Dict[str, Any]) -> str:
+    """Formats results to comprehensive plain text output."""
+    output = []
+    
+    output.append("=== CASE DETAILS ===")
+    for key, value in results['case_details'].items():
+        display_key = key.replace('_', ' ').title()
+        if isinstance(value, bool):
+            output.append(f"{display_key}: {'Yes' if value else 'No'}")
+        else:
+            output.append(f"{display_key}: {value}")
+    
+    output.append("\n=== COMPREHENSIVE IMPACT ANALYSIS ===")
+    output.append(results['impact_analysis_text'])
+    
+    output.append("\n=== CAUSAL ATTRIBUTIONS ===")
+    for factor, score in results['causal_attributions'].items():
+        output.append(f"- {factor.replace('_', ' ').title()}: {score:.4f}")
+    
+    output.append("\n=== RECOMMENDATIONS ===")
+    output.append(results['recommendations'])
+    
+    return "\n".join(output)
+
+if __name__ == "__main__":
+    """Main execution flow with comprehensive analysis and reporting."""
+    try:
+        client = initialize_azure_client()
+        analyzer = ManufacturingRCAAnalyzer(client)
+        
+        # Example case - can be replaced with user input
+        case_text = """On Jan 12, 2021, the MESE1 Manufacturing Line was stopped due to discrepancy between Visual Aids and Setup Sheet, resulting in incorrect screw P/N used at Build Station 4. Work instruction OPER-WI-086 Rev C specifies P/N 5600203-01, but P/N 5600008-03 was used. The BOM and Setup Sheet are correct, but the Visual Aid rev 003 shows the wrong P/N."""
+        
+        # Perform complete analysis
+        results = analyzer.analyze_case(case_text)
+        
+        # Add impact analysis text to results
+        results['impact_analysis_text'] = analyzer._generate_impact_analysis_text(results['impact_metrics'])
+        
+        # Generate outputs
+        data = analyzer._generate_realistic_synthetic_data(results['case_details'])
+        data_path = analyzer.export_synthetic_data(data)
+        pdf_path = analyzer.generate_pdf_report(results, data_path)
+        
+        # Print results
+        print(format_plaintext_output(results))
+        print(f"\nReport generated: {pdf_path}")
+        print(f"Data exported to: {data_path}")
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+
++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++
+
+
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
 from typing import Dict, Any, List
 import json
 import os
