@@ -1,3 +1,73 @@
+class ManufacturingRCAAnalyzer:
+    """Enhanced RCA analyzer with comprehensive impact analysis on target node."""
+    
+    def __init__(self, azure_openai_client):
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        self.potential_root_causes = set()
+
+    def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """Comprehensive analysis of impact pathways to target node."""
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        gcm.fit(self.scm, data)
+        
+        impact_metrics = {}
+        
+        # 1. Direct causal influence (total contribution)
+        impact_metrics['direct_influence'] = gcm.intrinsic_causal_influence(
+            self.scm, 
+            target_node='Production_Impact',
+            prediction_model='approx'
+        )
+        
+        # 2. Path-specific effects (direct paths)
+        impact_metrics['path_effects'] = {}
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact':
+                # Create intervention distributions
+                intervention_data = data[node].values
+                reference_data = np.full_like(intervention_data, data[node].mean())
+                
+                effect = gcm.average_causal_effect(
+                    self.scm,
+                    node,
+                    'Production_Impact',
+                    intervention_data=intervention_data,
+                    interventions_reference=reference_data
+                )
+                if not np.isnan(effect):
+                    impact_metrics['path_effects'][node] = effect
+        
+        # 3. Counterfactual impact (what-if analysis)
+        impact_metrics['counterfactual'] = {}
+        normal_samples = data.mean().to_frame().T
+        anomaly_samples = data.iloc[:1]
+        
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact':
+                effect = gcm.counterfactual.distribute_causal_effect(
+                    self.scm,
+                    'Production_Impact',
+                    node,
+                    normal_samples,
+                    anomaly_samples
+                )
+                if effect is not None:
+                    impact_metrics['counterfactual'][node] = float(effect)
+        
+        # 4. Statistical significance testing
+        impact_metrics['significance'] = self._calculate_impact_significance(data)
+        
+        return impact_metrics
+
+    # [Rest of the class implementation remains exactly the same as before]
+
+
+*****************************************
+**********************************************
+***********************************************
+
 import pandas as pd
 import networkx as nx
 from dowhy import gcm
