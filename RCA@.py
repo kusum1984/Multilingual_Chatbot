@@ -1,4 +1,105 @@
 def generate_pdf_report(self, results: Dict[str, Any], graph_path: str, data_path: str) -> str:
+    """Generates professional PDF report with clean plain text formatting."""
+    pdf_path = f"RCA_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    
+    doc = SimpleDocTemplate(
+        pdf_path, 
+        pagesize=letter,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40
+    )
+    
+    styles = getSampleStyleSheet()
+    wrapped_style = ParagraphStyle(
+        'Wrapped',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=12,
+        spaceAfter=6
+    )
+    
+    # Generate visualizations
+    causal_graph_path = self.visualize_causal_graph()
+    impact_path = self.visualize_impact_graph(results['causal_influence'])
+    
+    story = []
+    
+    # Title
+    story.append(Paragraph("Manufacturing Root Cause Analysis Report", styles['Title']))
+    story.append(Spacer(1, 12))
+    
+    # Case Details
+    story.append(Paragraph("Case Details", styles['Heading2']))
+    case_data = []
+    for key, value in results['case_details'].items():
+        display_key = key.replace('_', ' ').title()
+        if key == 'root_cause_hypothesis':
+            display_value = value  # Already plain text
+        else:
+            display_value = "Yes" if isinstance(value, bool) and value else \
+                          "No" if isinstance(value, bool) else str(value)
+        case_data.append([display_key, display_value])
+    
+    case_table = Table(case_data, colWidths=[2*inch, 4*inch])
+    case_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    story.append(case_table)
+    story.append(Spacer(1, 12))
+    
+    # Causal Graph
+    story.append(Paragraph("Process Causal Relationships", styles['Heading2']))
+    story.append(Image(causal_graph_path, width=6*inch, height=4.5*inch))
+    story.append(Spacer(1, 12))
+    
+    # Impact Analysis
+    story.append(Paragraph("Impact Analysis", styles['Heading2']))
+    story.append(Image(impact_path, width=6*inch, height=4.5*inch))
+    story.append(Spacer(1, 12))
+    
+    # Contributing Factors
+    story.append(Paragraph("Key Contributing Factors", styles['Heading2']))
+    
+    # Convert causal attributions to clean text
+    factors_text = []
+    for factor, score in results['causal_attributions'].items():
+        clean_name = factor.replace('_', ' ').title()
+        clean_score = float(score[0]) if isinstance(score, (list, np.ndarray)) else float(score)
+        factors_text.append(f"{clean_name}: {clean_score:.3f}")
+    
+    factors_paragraph = Paragraph("<br/>".join(factors_text), wrapped_style)
+    story.append(factors_paragraph)
+    story.append(Spacer(1, 12))
+    
+    # Recommendations (already plain text)
+    story.append(Paragraph("Recommended Actions", styles['Heading2']))
+    rec_paragraphs = []
+    for line in results['recommendations'].split('\n'):
+        if line.strip():
+            rec_paragraphs.append(line.strip())
+    story.append(Paragraph("<br/>".join(rec_paragraphs), wrapped_style))
+    story.append(Spacer(1, 12))
+    
+    # Data Reference
+    story.append(Paragraph("Data Reference", styles['Heading2']))
+    story.append(Paragraph(f"Synthetic data exported to: {data_path}", styles['Normal']))
+    
+    doc.build(story)
+    return pdf_path
+
+***********************
+**************************
+
+
+
+def generate_pdf_report(self, results: Dict[str, Any], graph_path: str, data_path: str) -> str:
     """Generates professional PDF report with consistent factor presentation."""
     pdf_path = f"RCA_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     
