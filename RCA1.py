@@ -1,4 +1,207 @@
 """
+Enhanced Manufacturing Root Cause Analysis (RCA) System with Causal Influence Analysis
+"""
+
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
+from typing import Dict, Any, List
+import json
+import os
+import numpy as np
+from openai import AzureOpenAI
+from dotenv import load_dotenv
+import matplotlib.pyplot as plt
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+
+class ManufacturingRCAAnalyzer:
+    """Enhanced analyzer with causal influence analysis and improved data generation."""
+    
+    def __init__(self, azure_openai_client):
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        
+    def _build_common_causal_graph(self) -> nx.DiGraph:
+        """Constructs the manufacturing process causal graph with enhanced relationships."""
+        return nx.DiGraph([
+            # Document control influences
+            ('Document_Version_Control', 'Work_Instruction_Accuracy'),
+            ('Document_Version_Control', 'Visual_Aid_Accuracy'),
+            
+            # Accuracy influences
+            ('BOM_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Setup_Sheet_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Visual_Aid_Accuracy', 'Work_Instruction_Accuracy'),
+            
+            # Operational factors
+            ('Operator_Training', 'Correct_Part_Usage'),
+            ('Operator_Training', 'Part_Verification_Process'),
+            ('Work_Instruction_Accuracy', 'Correct_Part_Usage'),
+            ('Part_Verification_Process', 'Correct_Part_Usage'),
+            
+            # Production impacts
+            ('Line_Stoppage_Protocol', 'Production_Impact'),
+            ('Correct_Part_Usage', 'Production_Impact'),
+            ('Work_Instruction_Accuracy', 'Production_Impact'),
+            ('Equipment_Condition', 'Production_Impact'),
+            ('Material_Quality', 'Production_Impact')
+        ])
+    
+    def _generate_realistic_synthetic_data(self, case_details: Dict[str, Any], num_samples=500) -> pd.DataFrame:
+        """Generates more realistic synthetic manufacturing data with correlations."""
+        base_values = {
+            'Document_Version_Control': case_details.get('document_version_issue', 0),
+            'BOM_Accuracy': case_details.get('bom_accurate', 1),
+            'Setup_Sheet_Accuracy': case_details.get('setup_sheet_accurate', 1),
+            'Visual_Aid_Accuracy': case_details.get('visual_aid_accurate', 0),
+            'Operator_Training': case_details.get('operator_trained', 1),
+            'Part_Verification_Process': case_details.get('part_verification_done', 0),
+            'Line_Stoppage_Protocol': case_details.get('line_stopped_correctly', 1),
+            'Correct_Part_Usage': case_details.get('correct_part_used', 0),
+            'Equipment_Condition': case_details.get('equipment_condition', 0.8),
+            'Material_Quality': case_details.get('material_quality', 0.9),
+            'Production_Impact': case_details.get('production_impact', 1)
+        }
+        
+        # Generate correlated data
+        data = pd.DataFrame()
+        rng = np.random.default_rng(42)
+        
+        # Binary factors with some correlation
+        data['Document_Version_Control'] = rng.binomial(1, base_values['Document_Version_Control'], num_samples)
+        data['Visual_Aid_Accuracy'] = np.where(
+            data['Document_Version_Control'] == 1,
+            rng.binomial(1, 0.2, num_samples),  # If docs are bad, visual aids likely wrong
+            rng.binomial(1, 0.9, num_samples)   # If docs good, visual aids likely correct
+        )
+        
+        # Continuous factors with dependencies
+        data['Work_Instruction_Accuracy'] = np.clip(
+            0.7 * data['Document_Version_Control'] +
+            0.6 * rng.normal(base_values['BOM_Accuracy'], 0.1, num_samples) +
+            0.6 * rng.normal(base_values['Setup_Sheet_Accuracy'], 0.1, num_samples) +
+            0.5 * data['Visual_Aid_Accuracy'] +
+            rng.normal(0, 0.1, num_samples),
+            0, 1
+        )
+        
+        # More realistic production impact calculation
+        data['Production_Impact'] = np.clip(
+            0.4 * (1 - data['Correct_Part_Usage']) +
+            0.3 * (1 - data['Work_Instruction_Accuracy']) +
+            0.2 * (1 - rng.normal(base_values['Equipment_Condition'], 0.1, num_samples)) +
+            0.1 * (1 - rng.normal(base_values['Material_Quality'], 0.1, num_samples)) +
+            rng.normal(0, 0.05, num_samples),
+            0, 1
+        )
+        
+        return data
+    
+    def analyze_causal_influence(self, data: pd.DataFrame) -> Dict[str, float]:
+        """Calculates and returns intrinsic causal influence of each factor."""
+        # Assign causal mechanisms automatically
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        
+        # Fit the causal model
+        gcm.fit(self.scm, data)
+        
+        # Calculate intrinsic causal influence
+        influence = gcm.intrinsic_causal_influence(
+            self.scm, 
+            target_node='Production_Impact',
+            prediction_model='approx'
+        )
+        
+        # Normalize influence scores
+        total = sum(abs(v) for v in influence.values())
+        normalized_influence = {k: v/total for k, v in influence.items()}
+        
+        return dict(sorted(normalized_influence.items(), key=lambda item: abs(item[1]), reverse=True))
+
+    # [Keep all your existing methods but update analyze_case to include influence analysis]
+
+    def analyze_case(self, case_text: str, num_samples=500) -> Dict[str, Any]:
+        """Enhanced analysis workflow with causal influence."""
+        case_details = self._extract_case_details(case_text)
+        data = self._generate_realistic_synthetic_data(case_details, num_samples)
+        
+        # Standard causal analysis
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        gcm.fit(self.scm, data)
+        
+        attributions = gcm.attribute_anomalies(
+            self.scm, 
+            target_node='Production_Impact',
+            anomaly_samples=data.iloc[:1]
+        )
+        
+        # Causal influence analysis
+        influence = self.analyze_causal_influence(data)
+        
+        return {
+            'case_details': case_details,
+            'causal_attributions': {
+                k: float(v[0]) if isinstance(v, (np.ndarray, list)) else float(v) 
+                for k, v in attributions.items()
+            },
+            'causal_influence': influence,
+            'recommendations': self._generate_recommendations(case_details, influence)
+        }
+
+# [Rest of your existing helper functions and main execution block]
+
+if __name__ == "__main__":
+    """Enhanced main execution with causal influence reporting."""
+    try:
+        client = initialize_azure_client()
+        analyzer = ManufacturingRCAAnalyzer(client)
+        
+        case_text = """Assembly line stopped due to incorrect torque specification being followed. 
+        Work instruction was updated last week but operator used old printed copy. 
+        Machine sensors detected abnormal vibration before failure."""
+        
+        # Perform analysis
+        results = analyzer.analyze_case(case_text)
+        
+        # Generate outputs
+        graph_path = analyzer.visualize_causal_graph()
+        data = analyzer._generate_realistic_synthetic_data(results['case_details'])
+        data_path = analyzer.export_synthetic_data(data)
+        pdf_path = analyzer.generate_pdf_report(results, graph_path, data_path)
+        
+        # Console output
+        print("=== CASE DETAILS ===")
+        print(json.dumps(results['case_details'], indent=2))
+        
+        print("\n🔍 TOTAL CAUSAL INFLUENCE ON PRODUCTION IMPACT:")
+        for factor, score in results['causal_influence'].items():
+            print(f"{factor:<25}: {score:.4f}")
+            
+        print("\n=== RECOMMENDATIONS ===")
+        print(results['recommendations'])
+        
+        print(f"\nReport generated: {pdf_path}")
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+
+
++++++++++++++++++++++++
++++++++++++++++++++++++++++++++++
+
+
+
+
+
+
+"""
 Manufacturing Root Cause Analysis (RCA) System with PDF Reporting
 """
 
