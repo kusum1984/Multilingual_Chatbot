@@ -1,3 +1,284 @@
+import pandas as pd
+import networkx as nx
+from dowhy import gcm
+from typing import Dict, Any, List, Tuple
+import json
+import os
+import numpy as np
+from openai import AzureOpenAI
+from dotenv import load_dotenv
+import matplotlib.pyplot as plt
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from scipy.stats import norm
+
+class ManufacturingRCAAnalyzer:
+    """Comprehensive Root Cause Analysis for Manufacturing Processes"""
+    
+    def __init__(self, azure_openai_client):
+        self.common_causal_graph = self._build_common_causal_graph()
+        self.scm = gcm.StructuralCausalModel(self.common_causal_graph)
+        self.client = azure_openai_client
+        self.potential_root_causes = set()
+
+    def _build_common_causal_graph(self) -> nx.DiGraph:
+        """Constructs the manufacturing process causal graph"""
+        return nx.DiGraph([
+            ('Document_Version_Control', 'Work_Instruction_Accuracy'),
+            ('Document_Version_Control', 'Visual_Aid_Accuracy'),
+            ('BOM_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Setup_Sheet_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Visual_Aid_Accuracy', 'Work_Instruction_Accuracy'),
+            ('Operator_Training', 'Correct_Part_Usage'),
+            ('Operator_Training', 'Part_Verification_Process'),
+            ('Work_Instruction_Accuracy', 'Correct_Part_Usage'),
+            ('Part_Verification_Process', 'Correct_Part_Usage'),
+            ('Line_Stoppage_Protocol', 'Production_Impact'),
+            ('Correct_Part_Usage', 'Production_Impact'),
+            ('Work_Instruction_Accuracy', 'Production_Impact'),
+            ('Equipment_Condition', 'Production_Impact'),
+            ('Material_Quality', 'Production_Impact')
+        ])
+
+    def _generate_realistic_synthetic_data(self, case_details: Dict[str, Any], num_samples=500) -> pd.DataFrame:
+        """Generates synthetic data matching case characteristics"""
+        base_values = {
+            'Document_Version_Control': case_details.get('document_version_issue', 0),
+            'BOM_Accuracy': case_details.get('bom_accurate', 1),
+            'Setup_Sheet_Accuracy': case_details.get('setup_sheet_accurate', 1),
+            'Visual_Aid_Accuracy': case_details.get('visual_aid_accurate', 0),
+            'Operator_Training': case_details.get('operator_trained', 1),
+            'Part_Verification_Process': case_details.get('part_verification_done', 0),
+            'Line_Stoppage_Protocol': case_details.get('line_stopped_correctly', 1),
+            'Equipment_Condition': case_details.get('equipment_condition', 0.8),
+            'Material_Quality': case_details.get('material_quality', 0.9),
+            'Correct_Part_Usage': case_details.get('correct_part_used', 0),
+            'Work_Instruction_Accuracy': 1,
+            'Production_Impact': case_details.get('production_impact', 1)
+        }
+        
+        rng = np.random.default_rng(42)
+        data = pd.DataFrame()
+        
+        # Generate base variables with appropriate distributions
+        for col in base_values:
+            if col in ['Document_Version_Control', 'Visual_Aid_Accuracy', 'Operator_Training',
+                     'Part_Verification_Process', 'Line_Stoppage_Protocol', 'Correct_Part_Usage']:
+                data[col] = rng.binomial(1, base_values[col], num_samples)
+            else:
+                data[col] = np.clip(rng.normal(base_values[col], 0.1, num_samples), 0, 1)
+        
+        # Generate intermediate nodes with causal relationships
+        data['Work_Instruction_Accuracy'] = np.clip(
+            0.3 * data['Document_Version_Control'] +
+            0.3 * data['BOM_Accuracy'] +
+            0.3 * data['Setup_Sheet_Accuracy'] +
+            0.1 * data['Visual_Aid_Accuracy'] +
+            rng.normal(0, 0.05, num_samples),
+            0, 1
+        )
+        
+        # Generate target node with impact relationships
+        data['Production_Impact'] = np.clip(
+            0.5 * (1 - data['Correct_Part_Usage']) +
+            0.2 * (1 - data['Work_Instruction_Accuracy']) +
+            0.2 * (1 - data['Equipment_Condition']) +
+            0.1 * (1 - data['Material_Quality']) +
+            rng.normal(0, 0.05, num_samples),
+            0, 1
+        )
+        
+        return data
+
+    def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """Analyzes all impact pathways to target node"""
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        gcm.fit(self.scm, data)
+        
+        impact_metrics = {}
+        num_samples = len(data)
+        
+        # 1. Direct causal influence
+        try:
+            influence_results = gcm.intrinsic_causal_influence(
+                self.scm, 
+                target_node='Production_Impact',
+                prediction_model='approx'
+            )
+            impact_metrics['direct_influence'] = {
+                node: float(score) if not callable(score) else 0.0
+                for node, score in influence_results.items()
+            }
+        except Exception as e:
+            print(f"Error calculating direct influence: {str(e)}")
+            impact_metrics['direct_influence'] = {}
+
+        # 2. Path-specific effects
+        impact_metrics['path_effects'] = {}
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact' and node in data.columns:
+                if data[node].isnull().any() or not np.issubdtype(data[node].dtype, np.number):
+                    continue
+                    
+                node_values = data[node].values.astype(float)
+                ref_value = float(np.nanmean(node_values))
+                
+                def alt_intervention(_): return node_values.copy()
+                def ref_intervention(_): return np.full(num_samples, ref_value)
+                
+                try:
+                    effect = gcm.average_causal_effect(
+                        causal_model=self.scm,
+                        target_node='Production_Impact',
+                        interventions_alternative={node: alt_intervention},
+                        interventions_reference={node: ref_intervention},
+                        num_samples_to_draw=num_samples
+                    )
+                    if effect is not None and not np.isnan(effect):
+                        impact_metrics['path_effects'][node] = float(effect)
+                except Exception as e:
+                    print(f"Error calculating effect for {node}: {str(e)}")
+                    continue
+    
+        # 3. Counterfactual impact
+        impact_metrics['counterfactual'] = {}
+        try:
+            normal_samples = data.mean(numeric_only=True).to_frame().T
+            anomaly_samples = data.iloc[:1]
+            
+            for node in self.common_causal_graph.nodes():
+                if node != 'Production_Impact' and node in normal_samples.columns:
+                    try:
+                        effect = gcm.counterfactual.distribute_causal_effect(
+                            self.scm,
+                            'Production_Impact',
+                            node,
+                            normal_samples,
+                            anomaly_samples
+                        )
+                        if effect is not None:
+                            impact_metrics['counterfactual'][node] = float(effect)
+                    except Exception as e:
+                        print(f"Error calculating counterfactual for {node}: {str(e)}")
+                        continue
+        except Exception as e:
+            print(f"Error in counterfactual setup: {str(e)}")
+
+        # 4. Statistical significance
+        impact_metrics['significance'] = self._calculate_impact_significance(data)
+        
+        return impact_metrics
+
+    def _calculate_impact_significance(self, data: pd.DataFrame) -> Dict[str, Tuple[float, float]]:
+        """Calculates statistical significance of impacts"""
+        significance = {}
+        num_iterations = 100
+        
+        try:
+            baseline = float(data['Production_Impact'].mean())
+        except:
+            return significance
+        
+        for node in self.common_causal_graph.nodes():
+            if node != 'Production_Impact' and node in data.columns:
+                if data[node].isnull().any() or not np.issubdtype(data[node].dtype, np.number):
+                    continue
+                    
+                effects = []
+                node_mean = float(data[node].mean())
+                
+                for _ in range(num_iterations):
+                    try:
+                        pred = gcm.interventional_samples(
+                            self.scm,
+                            interventions={node: lambda x: np.full(x.shape[0], node_mean)},
+                            num_samples_to_draw=100
+                        )['Production_Impact']
+                        
+                        effects.append(baseline - float(pred.mean()))
+                    except:
+                        continue
+                
+                if len(effects) > 0:
+                    mean_effect = float(np.nanmean(effects))
+                    std_effect = float(np.nanstd(effects)) if len(effects) > 1 else 0.0
+                    
+                    if std_effect > 0:
+                        try:
+                            z_score = mean_effect / (std_effect / np.sqrt(len(effects)))
+                            p_value = 2 * (1 - norm.cdf(abs(z_score)))
+                        except:
+                            p_value = 1.0
+                    else:
+                        p_value = 1.0
+                    
+                    significance[node] = (mean_effect, float(p_value))
+        
+        return significance
+
+    def analyze_case(self, case_text: str, num_samples=500) -> Dict[str, Any]:
+        """Complete root cause analysis workflow"""
+        case_details = self._extract_case_details(case_text)
+        self._handle_potential_root_causes(case_details)
+        
+        data = self._generate_realistic_synthetic_data(case_details, num_samples)
+        
+        gcm.auto.assign_causal_mechanisms(self.scm, data)
+        gcm.fit(self.scm, data)
+        
+        attributions = gcm.attribute_anomalies(
+            self.scm, 
+            target_node='Production_Impact',
+            anomaly_samples=data.iloc[:1]
+        )
+        
+        influence = self.analyze_impact_paths(data)
+        
+        return {
+            'case_details': case_details,
+            'causal_attributions': {
+                k: float(v[0]) if isinstance(v, (np.ndarray, list)) else float(v)
+                for k, v in attributions.items()
+            },
+            'impact_metrics': influence,
+            'recommendations': self._generate_recommendations(case_details, influence)
+        }
+
+    # [Additional helper methods remain unchanged...]
+
+def initialize_azure_client() -> AzureOpenAI:
+    """Initializes Azure OpenAI client"""
+    load_dotenv()
+    return AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-12-01-preview"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+
+if __name__ == "__main__":
+    try:
+        client = initialize_azure_client()
+        analyzer = ManufacturingRCAAnalyzer(client)
+        
+        case_text = """On Jan 12, 2021, the MESE1 Manufacturing Line was stopped..."""
+        
+        results = analyzer.analyze_case(case_text)
+        
+        print("Analysis completed successfully")
+        print(f"Root Cause: {results['case_details'].get('root_cause_hypothesis', 'Unknown')}")
+        
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
+
+
+
+*******************
+*****************************
+
 def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     """Comprehensive analysis of impact pathways to target node."""
     gcm.auto.assign_causal_mechanisms(self.scm, data)
