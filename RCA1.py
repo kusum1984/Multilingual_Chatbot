@@ -56,7 +56,6 @@ def _generate_realistic_synthetic_data(self, case_details: Dict[str, Any], num_s
     )
     
     return data
-
 def analyze_case(self, case_text: str, num_samples=500) -> Dict[str, Any]:
     case_details = self._extract_case_details(case_text)
     data = self._generate_realistic_synthetic_data(case_details, num_samples)
