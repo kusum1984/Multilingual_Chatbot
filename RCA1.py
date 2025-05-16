@@ -4,6 +4,128 @@ def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]
     gcm.fit(self.scm, data)
     
     impact_metrics = {}
+    num_samples = len(data)
+    
+    # 1. Direct causal influence (total contribution)
+    impact_metrics['direct_influence'] = {
+        node: float(score) 
+        for node, score in gcm.intrinsic_causal_influence(
+            self.scm, 
+            target_node='Production_Impact',
+            prediction_model='approx'
+        ).items()
+    }
+    
+    # 2. Path-specific effects (direct paths)
+    impact_metrics['path_effects'] = {}
+    for node in self.common_causal_graph.nodes():
+        if node != 'Production_Impact' and node in data.columns:
+            # Skip if node has null values
+            if data[node].isnull().any():
+                continue
+                
+            # Create intervention functions with proper dimension handling
+            node_values = data[node].values
+            ref_value = float(data[node].mean())
+            
+            def alt_intervention(_): 
+                return node_values.copy()
+                
+            def ref_intervention(_): 
+                return np.full(num_samples, ref_value)
+            
+            try:
+                effect = gcm.average_causal_effect(
+                    causal_model=self.scm,
+                    target_node='Production_Impact',
+                    interventions_alternative={node: alt_intervention},
+                    interventions_reference={node: ref_intervention},
+                    num_samples_to_draw=num_samples
+                )
+                if effect is not None and not np.isnan(effect):
+                    impact_metrics['path_effects'][node] = float(effect)
+            except Exception as e:
+                print(f"Error calculating effect for {node}: {str(e)}")
+                continue
+    
+    # 3. Counterfactual impact (what-if analysis)
+    impact_metrics['counterfactual'] = {}
+    normal_samples = data.mean().to_frame().T
+    anomaly_samples = data.iloc[:1]
+    
+    for node in self.common_causal_graph.nodes():
+        if node != 'Production_Impact' and node in data.columns:
+            try:
+                effect = gcm.counterfactual.distribute_causal_effect(
+                    self.scm,
+                    'Production_Impact',
+                    node,
+                    normal_samples,
+                    anomaly_samples
+                )
+                if effect is not None:
+                    impact_metrics['counterfactual'][node] = float(effect)
+            except Exception as e:
+                print(f"Error calculating counterfactual for {node}: {str(e)}")
+                continue
+    
+    # 4. Statistical significance testing
+    impact_metrics['significance'] = self._calculate_impact_significance(data)
+    
+    return impact_metrics
+
+def _calculate_impact_significance(self, data: pd.DataFrame) -> Dict[str, Tuple[float, float]]:
+    """Calculates statistical significance of each factor's impact."""
+    significance = {}
+    num_iterations = 100
+    baseline = float(data['Production_Impact'].mean())
+    
+    for node in self.common_causal_graph.nodes():
+        if node != 'Production_Impact' and node in data.columns:
+            # Skip if node has null values
+            if data[node].isnull().any():
+                continue
+                
+            effects = []
+            node_mean = float(data[node].mean())
+            
+            for _ in range(num_iterations):
+                try:
+                    # Predict outcome under intervention
+                    pred = gcm.interventional_samples(
+                        self.scm,
+                        interventions={node: lambda x: np.full(x.shape[0], node_mean)},
+                        num_samples_to_draw=100
+                    )['Production_Impact']
+                    
+                    effects.append(baseline - float(pred.mean()))
+                except Exception as e:
+                    print(f"Error in significance calculation for {node}: {str(e)}")
+                    continue
+            
+            if len(effects) > 0:
+                mean_effect = float(np.mean(effects))
+                std_effect = float(np.std(effects)) if len(effects) > 1 else 0.0
+                
+                if std_effect > 0:
+                    z_score = mean_effect / (std_effect / np.sqrt(len(effects)))
+                    p_value = 2 * (1 - norm.cdf(abs(z_score)))
+                else:
+                    p_value = 0.0
+                
+                significance[node] = (mean_effect, float(p_value))
+    
+    return significance
+
+
+************************
+
+def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+    """Comprehensive analysis of impact pathways to target node."""
+    gcm.auto.assign_causal_mechanisms(self.scm, data)
+    gcm.fit(self.scm, data)
+    
+    impact_metrics = {}
     
     # 1. Direct causal influence (total contribution)
     impact_metrics['direct_influence'] = gcm.intrinsic_causal_influence(
