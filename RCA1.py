@@ -1,3 +1,60 @@
+def analyze_impact_paths(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+    """Comprehensive analysis of impact pathways to target node."""
+    gcm.auto.assign_causal_mechanisms(self.scm, data)
+    gcm.fit(self.scm, data)
+    
+    impact_metrics = {}
+    
+    # 1. Direct causal influence (total contribution)
+    impact_metrics['direct_influence'] = gcm.intrinsic_causal_influence(
+        self.scm, 
+        target_node='Production_Impact',
+        prediction_model='approx'
+    )
+    
+    # 2. Path-specific effects (direct paths)
+    impact_metrics['path_effects'] = {}
+    for node in self.common_causal_graph.nodes():
+        if node != 'Production_Impact':
+            # Create intervention distributions
+            def alt_intervention(_): return data[node].values
+            def ref_intervention(_): return np.full(len(data), data[node].mean())
+            
+            effect = gcm.average_causal_effect(
+                causal_model=self.scm,
+                target_node='Production_Impact',
+                interventions_alternative={node: alt_intervention},
+                interventions_reference={node: ref_intervention},
+                observed_data=data,
+                num_samples_to_draw=100
+            )
+            if not np.isnan(effect):
+                impact_metrics['path_effects'][node] = float(effect)
+    
+    # 3. Counterfactual impact (what-if analysis)
+    impact_metrics['counterfactual'] = {}
+    normal_samples = data.mean().to_frame().T
+    anomaly_samples = data.iloc[:1]
+    
+    for node in self.common_causal_graph.nodes():
+        if node != 'Production_Impact':
+            effect = gcm.counterfactual.distribute_causal_effect(
+                self.scm,
+                'Production_Impact',
+                node,
+                normal_samples,
+                anomaly_samples
+            )
+            if effect is not None:
+                impact_metrics['counterfactual'][node] = float(effect)
+    
+    # 4. Statistical significance testing
+    impact_metrics['significance'] = self._calculate_impact_significance(data)
+    
+    return impact_metrics
+
+++++++++++++++++++++++
+
 class ManufacturingRCAAnalyzer:
     """Enhanced RCA analyzer with comprehensive impact analysis on target node."""
     
