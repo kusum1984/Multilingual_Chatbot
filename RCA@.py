@@ -1,4 +1,125 @@
+Step-by-Step Explanation
+1. Assign Causal Mechanisms
+python
+gcm.auto.assign_causal_mechanisms(self.scm, data)
+What it does:
+Automatically assigns appropriate causal models (e.g., linear regression, classifiers) to each node in the Structural Causal Model (SCM) based on the data type and distribution.
 
+Why it's needed:
+
+Different variables (e.g., binary, continuous) require different statistical models.
+
+Ensures that the causal relationships are modeled correctly.
+
+2. Fit the SCM to Data
+python
+gcm.fit(self.scm, data)
+What it does:
+Trains the assigned causal models using the provided synthetic data.
+
+Why it's needed:
+
+Estimates the parameters of the causal relationships.
+
+Allows the model to make predictions and quantify influences.
+
+3. Compute Intrinsic Causal Influence
+python
+influence = gcm.intrinsic_causal_influence(
+    self.scm, 
+    target_node='Production_Impact',
+    prediction_model='approx'
+)
+What it does:
+Computes how much each node in the causal graph intrinsically influences the target node (Production_Impact).
+
+Parameters:
+
+target_node='Production_Impact': The outcome variable we want to analyze.
+
+prediction_model='approx': Uses an approximation method for faster computation (alternative: 'exact' for more precision).
+
+Why it's needed:
+
+Quantifies the contribution of each factor (e.g., Operator_Training, Equipment_Condition) to production issues.
+
+Helps identify key leverage points for process improvement.
+
+4. Normalize Influence Scores
+python
+total = sum(abs(v) for v in influence.values())
+normalized_influence = {k: v/total for k, v in influence.items()}
+What it does:
+Normalizes the influence scores so that they sum to 1 (for relative comparison).
+
+Why it's needed:
+
+Makes the influence scores interpretable (e.g., "Factor X contributes 30% of the total influence").
+
+Ensures consistency when comparing different cases.
+
+5. Sort and Return Results
+python
+return dict(sorted(normalized_influence.items(), key=lambda item: abs(item[1]), reverse=True))
+What it does:
+Returns the influences as a sorted dictionary (descending order by absolute value).
+
+Why it's needed:
+
+Highlights the most significant factors first.
+
+Facilitates decision-making by prioritizing root causes.
+
+Key Concepts Behind the Function
+Intrinsic Causal Influence (ICI)
+
+Measures how much a variable affects the target due to its inherent properties, not just its position in the graph.
+
+Unlike standard regression coefficients, ICI accounts for indirect effects (e.g., Operator_Training → Part_Verification_Process → Production_Impact).
+
+Normalization
+
+Ensures that the influences are comparable across different analyses.
+
+Example: If Equipment_Condition has a score of 0.4, it means it contributes 40% of the total influence on Production_Impact.
+
+Prediction Model (approx vs. exact)
+
+approx: Faster but less precise (good for exploratory analysis).
+
+exact: More computationally expensive but accurate (for final reports).
+
+Here, approx is used for efficiency since synthetic data is already noisy.
+
+Why Not Just Use Correlation?
+
+Correlation ≠ Causation.
+
+This method isolates causal effects by considering the entire graph structure.
+
+Example Output
+python
+{
+    'Correct_Part_Usage': 0.45,
+    'Work_Instruction_Accuracy': 0.25,
+    'Equipment_Condition': 0.15,
+    'Material_Quality': 0.10,
+    'Operator_Training': 0.05
+}
+Interpretation:
+
+Correct_Part_Usage has the highest influence (45%) on production issues.
+
+Improving part verification processes would likely have the biggest impact.
+
+When to Use This Function?
+Root Cause Analysis (RCA): Identify key factors causing production delays/defects.
+
+Process Optimization: Focus improvement efforts on high-leverage variables.
+
+Risk Mitigation: Predict which factors might cause future issues.
+
+************************
 **************************
 
 
