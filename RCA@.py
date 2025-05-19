@@ -1,3 +1,61 @@
+Difference Between Intrinsic Causal Influence (ICI) and Anomaly Attribution
+Both methods analyze causal relationships but answer different questions:
+
+Feature	Intrinsic Causal Influence (ICI)	Anomaly Attribution
+Purpose	Measures system-wide influence of factors	Explains specific incidents (e.g., a production error)
+Question Answered	"Which factors generally impact production the most?"	"Why did this specific incident happen?"
+Output	Normalized scores (sum to 1)	Raw scores (can be +/–)
+Use Case	Process optimization, risk management	Root cause analysis (RCA) for inci
+
+Intrinsic Causal Influence (ICI)
+What It Tells Us
+Quantifies how much each factor inherently affects the target (Production_Impact) across the entire system.
+Example Output:
+
+python
+{
+    'Correct_Part_Usage': 0.45,   # 45% of total influence
+    'Work_Instruction_Accuracy': 0.25,
+    'Equipment_Condition': 0.15,
+    'Material_Quality': 0.10,
+    'Operator_Training': 0.05
+}
+How It Helps
+Prioritize Improvements: Focus on factors with the highest systemic influence (e.g., Correct_Part_Usage).
+
+Risk Assessment: Identifies variables that could cause widespread issues if they fail.
+
+Process Design: Helps optimize workflows by strengthening high-leverage factors.
+
+Example Action
+"Since Correct_Part_Usage has 45% influence, implement barcode scanning to reduce part misplacement."
+
+Anomaly Attribution
+What It Tells Us
+Explains how much each factor contributed to a specific incident (e.g., a production line stoppage).
+
+Example Output:
+
+python
+{
+    'Correct_Part_Usage': 0.42,     # Major contributor
+    'Work_Instruction_Accuracy': 0.30,
+    'Visual_Aid_Accuracy': -0.10,   # Reduced the impact
+    'Operator_Training': 0.08
+}
+How It Helps
+Incident Investigation: Pinpoints root causes of a specific failure (e.g., incorrect part usage).
+
+Corrective Actions: Directs fixes to the actual culprits (e.g., update work instructions).
+
+Protective Factors: Identifies what helped (negative scores) to replicate in other areas.
+
+Example Action
+"The incident was caused by wrong work instructions (30%) and part verification gaps (42%). Revise the work instructions and add a second verification step."
+
+**********************************
+
+
 Step-by-Step Explanation
 1. Assign Causal Mechanisms
 python
